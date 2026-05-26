@@ -21,6 +21,7 @@ import { ChatView } from "./components/ChatView";
 import { InputBox } from "./components/InputBox";
 import { ConversationTabs } from "./components/ConversationTabs";
 import { t, lang, toggleLang } from "./i18n";
+import { openUrl } from "@tauri-apps/plugin-opener";
 
 const PORT = 3456;
 
@@ -193,9 +194,13 @@ export function App() {
     return () => clearInterval(timer);
   }, []);
 
+  const handleExternalUrl = (url: string) => {
+    if (!url) return;
+    try { openUrl(url); } catch { window.open(url, "_blank"); }
+  };
+
   const handleUpdate = () => {
-    const url = updateInfo?.macUrl || updateInfo?.winUrl;
-    if (url) window.open(url, "_blank");
+    handleExternalUrl(updateInfo?.macUrl || updateInfo?.winUrl || "");
   };
 
   const isStreaming = active?.status === "Thinking..." || active?.status === "Streaming..." || active?.agentStatus === "warming";
@@ -268,14 +273,13 @@ export function App() {
                   {t("misc.update", { version: updateInfo.latest })}
                 </button>
               )}
-              <a
-                href="https://shieldyh.com"
-                target="_blank"
+              <button
                 class="upgrade-btn"
+                onClick={() => handleExternalUrl("https://shieldyh.com")}
                 title="Get Pro: 200+ skills, auto-start, 3 devices"
               >
                 {t("misc.upgrade")}
-              </a>
+              </button>
               {active.agentStatus === "warming" && (
                 <span class="status-bar-agent">⟳ {t("agent.warmingShort")} {warmingSec}s（通常 15-30s）</span>
               )}
