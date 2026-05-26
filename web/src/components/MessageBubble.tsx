@@ -1,5 +1,6 @@
 import type { Message } from "../store";
 import { useRef, useEffect, useMemo } from "preact/hooks";
+import { t } from "../i18n";
 
 interface Props {
   message: Message;
@@ -44,7 +45,6 @@ export function MessageBubble({ message, onToggleThinking }: Props) {
 
   const hasThinking = (message.thinkingContent?.length || 0) > 3;
   const isActive = message.status === "thinking" || message.status === "streaming";
-  // Auto-expand thinking while AI is working; collapse when done
   const expanded = message.thinkingVisible ?? isActive;
 
   const thinkingEndRef = useRef<HTMLDivElement>(null);
@@ -57,18 +57,18 @@ export function MessageBubble({ message, onToggleThinking }: Props) {
       <div class="message-bubble">
         {message.role !== "system" && (
           <div class="message-role">
-            {message.role === "user" ? "You" : "Claude"}
+            {message.role === "user" ? t("msg.you") : t("msg.claude")}
           </div>
         )}
 
-        {/* Thinking stream — auto-expanded while active */}
+        {/* Thinking stream */}
         {hasThinking && (
           <div class="thinking-block">
             <button
               class="thinking-toggle"
               onClick={() => onToggleThinking?.(message.id)}
             >
-              {expanded ? "▾" : "▸"} 🤔 Thinking
+              {expanded ? "▾" : "▸"} {t("msg.thinkingToggle")}
               {!isActive && (
                 <span class="thinking-preview">
                   {message.thinkingContent!.slice(0, 60)}
@@ -90,7 +90,7 @@ export function MessageBubble({ message, onToggleThinking }: Props) {
         {!hasThinking && isActive && (
           <div class="message-thinking-live">
             <span class="thinking-dot" />
-            Thinking...
+            {t("msg.thinking")}
           </div>
         )}
 

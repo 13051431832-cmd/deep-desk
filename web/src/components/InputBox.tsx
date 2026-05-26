@@ -1,4 +1,5 @@
 import { useRef, useState, useCallback } from "preact/hooks";
+import { t } from "../i18n";
 
 interface Props {
   onSend: (text: string) => void;
@@ -44,8 +45,8 @@ const TEXT_EXTENSIONS = new Set([
   "erl", "hrl", "hs", "elm", "clj", "cljs", "edn", "coffee", "litcoffee",
 ]);
 
-const MAX_TEXT_FILE_SIZE = 500 * 1024; // 500KB max for text files
-const MAX_BINARY_FILE_SIZE = 10 * 1024 * 1024; // 10MB max for binary
+const MAX_TEXT_FILE_SIZE = 500 * 1024;
+const MAX_BINARY_FILE_SIZE = 10 * 1024 * 1024;
 
 function isTextFile(file: File): boolean {
   if (file.type.startsWith("text/")) return true;
@@ -120,8 +121,6 @@ export function InputBox({ onSend, onCancel, onCommand, agentMode, agentStatus, 
     setImages((prev) => prev.filter((i) => i.id !== id));
   };
 
-  // ── File reading ──────────────────────────────────────────────────
-
   const readTextFile = (fa: FileAttachment) => {
     const reader = new FileReader();
     reader.onload = () => {
@@ -137,7 +136,6 @@ export function InputBox({ onSend, onCancel, onCommand, agentMode, agentStatus, 
     reader.readAsText(fa.file);
   };
 
-  // Upload binary file to server — server saves it and returns a file path AI tools can use
   const uploadFile = async (fa: FileAttachment) => {
     try {
       const formData = new FormData();
@@ -145,7 +143,6 @@ export function InputBox({ onSend, onCancel, onCommand, agentMode, agentStatus, 
       const resp = await fetch("/api/upload", { method: "POST", body: formData });
       const data = await resp.json();
       if (data.ok) {
-        // Build a message snippet: include text preview if available, otherwise just the path
         let content = `[File path: ${data.path}]\n`;
         if (data.textPreview) {
           const ext = fa.file.name.split(".").pop()?.toLowerCase() || "";
@@ -169,7 +166,6 @@ export function InputBox({ onSend, onCancel, onCommand, agentMode, agentStatus, 
   };
 
   const addFile = (file: File) => {
-    // Check size
     const isText = isTextFile(file);
     const maxSize = isText ? MAX_TEXT_FILE_SIZE : MAX_BINARY_FILE_SIZE;
     if (file.size > maxSize) {
@@ -204,7 +200,6 @@ export function InputBox({ onSend, onCancel, onCommand, agentMode, agentStatus, 
     const hasImages = images.length > 0 && images.some((i) => i.description);
     const hasFiles = files.length > 0;
 
-    // Handle slash commands locally (only when no attachments)
     if (text.startsWith("/") && !hasImages && !hasFiles) {
       const space = text.indexOf(" ");
       const cmd = space > 0 ? text.slice(1, space) : text.slice(1);
@@ -221,26 +216,21 @@ export function InputBox({ onSend, onCancel, onCommand, agentMode, agentStatus, 
 
     if (!text && !hasImages && !hasFiles) return;
 
-    // Build message with image descriptions and file contents
     let fullText = "";
 
-    // Attach file contents first
     for (const f of files) {
       if (f.error) {
         fullText += `[File: ${f.file.name} — ${f.error}]\n\n`;
       } else if (f.content) {
         if (f.content.startsWith("[File path:")) {
-          // Server-uploaded file — content already formatted with path + preview
           fullText += f.content + "\n\n";
         } else {
-          // Browser-read text file — wrap in code block
           const ext = f.file.name.split(".").pop()?.toLowerCase() || "";
           fullText += `[File: ${f.file.name}]\n\`\`\`${ext}\n${f.content}\n\`\`\`\n\n`;
         }
       }
     }
 
-    // Image descriptions
     for (const img of images) {
       if (img.description && !img.description.startsWith("Error")) {
         fullText += `[Image: ${img.description}]\n\n`;
@@ -252,7 +242,6 @@ export function InputBox({ onSend, onCancel, onCommand, agentMode, agentStatus, 
 
     onSend(fullText.trim());
 
-    // Reset
     if (inputRef.current) { inputRef.current.value = ""; setInputText(""); }
     for (const img of images) URL.revokeObjectURL(img.previewUrl);
     setImages([]);
@@ -275,7 +264,6 @@ export function InputBox({ onSend, onCancel, onCommand, agentMode, agentStatus, 
     setInputText(inputRef.current?.value || "");
   };
 
-  // Paste handler — images go to vision, other files go to file list
   const handlePaste = (e: ClipboardEvent) => {
     const items = e.clipboardData?.items;
     if (!items) return;
@@ -292,7 +280,6 @@ export function InputBox({ onSend, onCancel, onCommand, agentMode, agentStatus, 
     }
   };
 
-  // Drop handler — route images to vision, all other files to file reader
   const handleDrop = (e: DragEvent) => {
     e.preventDefault();
     const files = e.dataTransfer?.files;
@@ -311,7 +298,6 @@ export function InputBox({ onSend, onCancel, onCommand, agentMode, agentStatus, 
     e.preventDefault();
   };
 
-  // File input handler
   const handleFileSelect = (e: Event) => {
     const input = e.target as HTMLInputElement;
     const f = input.files;
@@ -344,15 +330,15 @@ export function InputBox({ onSend, onCancel, onCommand, agentMode, agentStatus, 
           />
           <span class="mode-chip-icon">🤖</span>
           <span class="mode-chip-label">Agent</span>
-          <span class="mode-chip-badge">{agentStatus === "warming" ? "⟳" : agentMode ? "ON" : "OFF"}</span>
+          <span class="mode-chip-badge">{agentStatus === "warming" ? "⟳" : agentMode ? t("agent.on") : t("agent.off")}</span>
         </label>
         <span class="agent-hint">
           {agentStatus === "warming"
-            ? "Warming up (~25s)..."
+            ? t("agent.warming")
             : agentMode && agentStatus === "on"
-            ? "Tools, Skills, MCP"
+            ? t("agent.toolsHint")
             : agentMode
-            ? "Ready — Start to begin"
+            ? t("agent.readyHint")
             : ""}
         </span>
 
@@ -365,8 +351,8 @@ export function InputBox({ onSend, onCancel, onCommand, agentMode, agentStatus, 
             style="display:none"
           />
           <span class="mode-chip-icon">📋</span>
-          <span class="mode-chip-label">Plan</span>
-          <span class="mode-chip-badge">{planMode ? "ON" : "OFF"}</span>
+          <span class="mode-chip-label">{t("plan.label")}</span>
+          <span class="mode-chip-badge">{planMode ? t("agent.on") : t("agent.off")}</span>
         </label>
 
         {/* Bypass Permissions toggle */}
@@ -378,8 +364,8 @@ export function InputBox({ onSend, onCancel, onCommand, agentMode, agentStatus, 
             style="display:none"
           />
           <span class="mode-chip-icon">⚡</span>
-          <span class="mode-chip-label">Bypass</span>
-          <span class="mode-chip-badge">{bypassPermissions ? "ON" : "OFF"}</span>
+          <span class="mode-chip-label">{t("bypass.label")}</span>
+          <span class="mode-chip-badge">{bypassPermissions ? t("agent.on") : t("agent.off")}</span>
         </label>
 
         <div style="flex:1" />
@@ -387,20 +373,20 @@ export function InputBox({ onSend, onCancel, onCommand, agentMode, agentStatus, 
         {agentMode && agentStatus !== "off" && (
           agentStatus === "warming" ? (
             <button class="mode-btn mode-btn--warming" disabled>
-              ⟳ Starting...
+              {t("agent.starting")}
             </button>
           ) : (
             <button class="mode-btn mode-btn--stop" onClick={onStopAgent} title="Stop the agent process for this tab">
-              Stop Agent
+              {t("agent.stop")}
             </button>
           )
         )}
         {agentMode && agentStatus === "off" && (
           <button class="mode-btn mode-btn--start" onClick={onStartAgent} title="Start the agent process for this tab">
-            Start Agent
+            {t("agent.start")}
           </button>
         )}
-        <label class="image-upload-btn" title="Upload files (or drag & drop)">
+        <label class="image-upload-btn" title={t("attach.upload")}>
           📎
           <input type="file" multiple onChange={handleFileSelect} style="display:none" />
         </label>
@@ -414,7 +400,7 @@ export function InputBox({ onSend, onCancel, onCommand, agentMode, agentStatus, 
               <img src={img.previewUrl} alt="" class="attachment-card-img" />
               <button class="attachment-remove" onClick={() => removeImage(img.id)}>×</button>
               <div class="attachment-status">
-                {img.loading ? "⟳ Analyzing..." : img.description?.startsWith("Error") ? "Error" : "✓ Ready"}
+                {img.loading ? t("attach.analyzing") : img.description?.startsWith("Error") ? t("attach.error") : t("attach.ready")}
               </div>
             </div>
           ))}
@@ -431,7 +417,7 @@ export function InputBox({ onSend, onCancel, onCommand, agentMode, agentStatus, 
               <div class="attachment-file-size">{formatSize(f.file.size)}</div>
               <button class="attachment-remove" onClick={() => removeFile(f.id)}>×</button>
               <div class="attachment-status">
-                {f.loading ? "⟳ Reading..." : f.error ? f.error : "✓ Ready"}
+                {f.loading ? t("attach.reading") : f.error ? f.error : t("attach.ready")}
               </div>
             </div>
           ))}
@@ -449,19 +435,19 @@ export function InputBox({ onSend, onCancel, onCommand, agentMode, agentStatus, 
           onCompositionEnd={() => { isComposing.current = false; }}
           placeholder={
             attachmentCount > 0
-              ? "Add a message or send with attachments..."
+              ? t("input.placeholderAttach")
               : agentMode
-              ? "Agent mode — /new /clear /rename — drag files, paste images..."
-              : "Type, or /new /clear /rename — drag & drop files..."
+              ? t("input.placeholderAgent")
+              : t("input.placeholderFast")
           }
           rows={2}
         />
         <button type="submit" class="input-box-send" disabled={!canSend}>
-          {isStreaming ? "Send" : "Send"}
+          {t("input.send")}
         </button>
         {isStreaming && (
           <button type="button" class="input-box-stop" onClick={() => onCancel?.()}>
-            Stop
+            {t("input.stop")}
           </button>
         )}
       </form>

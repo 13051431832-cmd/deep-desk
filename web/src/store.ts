@@ -1,5 +1,6 @@
 import { signal } from "@preact/signals";
 import { randomUUID } from "./utils";
+import { t } from "./i18n";
 
 export interface Message {
   id: string;
@@ -214,7 +215,7 @@ export function getActive(): Conversation | null {
 export function newConversation(port: number): string {
   const id = cid();
   const conv: Conversation = {
-    id, title: "New Chat", messages: [], pendingPermission: null,
+    id, title: t("tab.newChat"), messages: [], pendingPermission: null,
     connected: false, status: "Connecting...", ws: null,
     agentMode: false, agentStatus: "off",
     planMode: false, bypassPermissions: true,
@@ -306,12 +307,12 @@ function getActiveAssistantMsg(conv: Conversation): Message | null {
 
 // Translate technical errors into beginner-friendly messages
 function friendlyError(raw: string): string {
-  if (/524|timeout|ETIMEDOUT/i.test(raw)) return "连接超时，请稍后重试。如果持续出现，请检查网络。";
-  if (/401|unauthorized|invalid.*key/i.test(raw)) return "API Key 无效，请在设置中更新。";
-  if (/429|rate.?limit/i.test(raw)) return "请求太频繁，请稍等片刻再试。";
-  if (/ENOTFOUND|ECONNREFUSED|network/i.test(raw)) return "无法连接到 AI 服务，请检查网络连接。";
+  if (/524|timeout|ETIMEDOUT/i.test(raw)) return t("error.timeout");
+  if (/401|unauthorized|invalid.*key/i.test(raw)) return t("error.apiKey");
+  if (/429|rate.?limit/i.test(raw)) return t("error.rateLimit");
+  if (/ENOTFOUND|ECONNREFUSED|network/i.test(raw)) return t("error.network");
   if (/Session restarted/i.test(raw)) return raw; // Already friendly
-  if (/Session ended after/i.test(raw)) return "AI 会话已断开。请刷新页面重新连接。";
+  if (/Session ended after/i.test(raw)) return t("error.sessionEnded");
   return raw.length > 150 ? raw.slice(0, 150) + "..." : raw;
 }
 
@@ -385,7 +386,7 @@ function handleConvEvent(convId: string, event: any) {
         saveSessions();
 
         // Auto-title from first exchange
-        if (conv.title === "New Chat" && conv.messages.length >= 2) {
+        if (conv.title === t("tab.newChat") && conv.messages.length >= 2) {
           const firstMsg = conv.messages[0]?.content || "";
           updateConv(convId, {
             title:

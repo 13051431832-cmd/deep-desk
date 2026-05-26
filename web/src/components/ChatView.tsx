@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState } from "preact/hooks";
 import { MessageBubble } from "./MessageBubble";
 import type { Message, PermissionRequest } from "../store";
+import { t } from "../i18n";
 
 interface Props {
   messages: Message[];
@@ -26,7 +27,7 @@ function ToolSummary({ tools }: { tools: Message[] }) {
       ))}
       {done.length > 0 && (
         <button class="tool-done-toggle" onClick={() => setExpanded(!expanded)}>
-          ✓ {done.length} tool{done.length > 1 ? "s" : ""} completed
+          {t("tool.completedCount", { n: done.length })}
           <span class="tool-chevron">{expanded ? " ▾" : " ▸"}</span>
         </button>
       )}
@@ -49,14 +50,12 @@ export function ChatView({
 }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Only scroll when user sends a message — not on AI response or tools
   const userMsgCount = messages.filter((m) => m.role === "user").length;
   const scrollKey = `${userMsgCount}`;
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [scrollKey]);
 
-  // Group consecutive tool messages into ToolSummary sections
   const groups: (Message | { type: "tools"; tools: Message[] })[] = [];
   let toolBuffer: Message[] = [];
   for (const msg of messages) {
@@ -78,8 +77,8 @@ export function ChatView({
     <div class="chat-view">
       {groups.length === 0 && (
         <div class="empty-state">
-          <h2>Deep Desk</h2>
-          <p>AI coding assistant powered by DeepSeek</p>
+          <h2>{t("misc.emptyChat")}</h2>
+          <p>{t("misc.emptyDesc")}</p>
         </div>
       )}
       {groups.map((item) =>

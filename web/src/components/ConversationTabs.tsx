@@ -1,5 +1,6 @@
 import { useState } from "preact/hooks";
 import type { Conversation } from "../store";
+import { t } from "../i18n";
 
 interface Props {
   conversations: Conversation[];
@@ -18,7 +19,7 @@ export function ConversationTabs({
 
   const startEdit = (conv: Conversation) => {
     setEditingId(conv.id);
-    setEditValue(conv.title === "New Chat" ? "" : conv.title);
+    setEditValue(conv.title === t("tab.newChat") ? "" : conv.title);
   };
 
   const commitEdit = () => {
@@ -61,7 +62,7 @@ export function ConversationTabs({
                   onBlur={commitEdit}
                   onClick={(e) => e.stopPropagation()}
                   autofocus
-                  placeholder="Project name..."
+                  placeholder={t("tab.placeholder")}
                 />
               ) : (
                 <span
@@ -81,7 +82,7 @@ export function ConversationTabs({
           );
         })}
       </div>
-      <button class="tab-new" onClick={onNew} title="New conversation">+</button>
+      <button class="tab-new" onClick={onNew} title={t("tab.newChat")}>+</button>
     </header>
   );
 }

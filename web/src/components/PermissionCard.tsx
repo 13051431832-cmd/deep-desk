@@ -1,4 +1,5 @@
 import type { PermissionRequest } from "../store";
+import { t } from "../i18n";
 
 interface Props {
   permission: PermissionRequest;
@@ -11,7 +12,7 @@ export function PermissionCard({ permission, onApprove, onDeny }: Props) {
     <div class="perm-card">
       <div class="perm-card-header">
         <span class="perm-card-icon">⚠️</span>
-        <span class="perm-card-title">Permission Required</span>
+        <span class="perm-card-title">{t("perm.title")}</span>
       </div>
       <div class="perm-card-body">
         <p>{permission.message}</p>
@@ -21,13 +22,13 @@ export function PermissionCard({ permission, onApprove, onDeny }: Props) {
           class="perm-btn perm-btn--approve"
           onClick={() => onApprove(permission.id)}
         >
-          ✓ Approve
+          {t("perm.approve")}
         </button>
         <button
           class="perm-btn perm-btn--deny"
           onClick={() => onDeny(permission.id)}
         >
-          ✗ Deny
+          {t("perm.deny")}
         </button>
       </div>
     </div>

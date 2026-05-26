@@ -19,8 +19,8 @@ import {
 } from "./store";
 import { ChatView } from "./components/ChatView";
 import { InputBox } from "./components/InputBox";
-import { PermissionCard } from "./components/PermissionCard";
 import { ConversationTabs } from "./components/ConversationTabs";
+import { t, lang, toggleLang } from "./i18n";
 
 const PORT = 3456;
 
@@ -86,23 +86,23 @@ export function App() {
         return true;
       case "clear":
         conversations.value = conversations.value.map((c) =>
-          c.id === cid ? { ...c, messages: [], title: "New Chat" } : c
+          c.id === cid ? { ...c, messages: [], title: t("tab.newChat") } : c
         );
         return true;
       case "rename":
         if (arg) renameConversation(cid, arg);
         return true;
       case "agent":
-        if (arg === "on") { toggleAgentMode(cid, true, PORT); addSystemMsg(cid, "**Agent Mode enabled.** Plan, Agents, Skills available. First warmup ~25s."); }
-        else if (arg === "off") { toggleAgentMode(cid, false); addSystemMsg(cid, "**Agent Mode disabled.** Back to Fast Mode."); }
-        else addSystemMsg(cid, "**/agent** — Usage:\n- `/agent on` — Enable Agent Mode\n- `/agent off` — Disable Agent Mode");
+        if (arg === "on") { toggleAgentMode(cid, true, PORT); addSystemMsg(cid, t("agent.enabled")); }
+        else if (arg === "off") { toggleAgentMode(cid, false); addSystemMsg(cid, t("agent.disabled")); }
+        else addSystemMsg(cid, t("cmd.agentUsage"));
         return true;
       case "status": {
         try {
           const resp = await fetch("/api/status");
           const s = await resp.json();
           const statuses = [
-            `**System Status**`,
+            t("cmd.status.title"),
             `Bun: ${s.bun ? "✅" : "❌"}`,
             `CCB: ${s.ccb ? "✅" : "❌"}`,
             `API Key: ${s.apiKey ? "✅" : "❌"}`,
@@ -111,31 +111,11 @@ export function App() {
             `Ready: ${s.ready ? "✅" : "❌"}`,
           ].join("\n");
           addSystemMsg(cid, statuses);
-        } catch { addSystemMsg(cid, "Status unavailable."); }
+        } catch { addSystemMsg(cid, t("cmd.status.unavail")); }
         return true;
       }
       case "help": {
-        addSystemMsg(cid, [
-          "**Commands**",
-          "",
-          "`/new` — New conversation",
-          "`/clear` — Clear current chat",
-          "`/rename <name>` — Rename tab",
-          "`/agent on|off` — Toggle Agent Mode",
-          "`/status` — System health check",
-          "`/help` — Show this help",
-          "",
-          "**Mode Buttons** (below input)",
-          "🤖 Agent — Tools, Skills, MCP",
-          "📋 Plan — Plan first, implement after approval",
-          "⚡ Bypass — Auto-approve tool permissions",
-          "",
-          "**Tips**",
-          "- Paste or drop images for analysis",
-          "- Click 🤔 Thinking to see reasoning",
-          "- Double-click tab to rename",
-          "- Tabs auto-save on close",
-        ].join("\n"));
+        addSystemMsg(cid, t("cmd.help"));
         return true;
       }
     }
@@ -165,17 +145,13 @@ export function App() {
   const handleTogglePlan = (enabled: boolean) => {
     if (!activeConvId.value) return;
     togglePlanMode(activeConvId.value, enabled);
-    addSystemMsg(activeConvId.value, enabled
-      ? "**Plan Mode ON** — AI will create a plan and wait for your approval before implementing."
-      : "**Plan Mode OFF** — AI will implement directly.");
+    addSystemMsg(activeConvId.value, enabled ? t("plan.on") : t("plan.off"));
   };
 
   const handleToggleBypass = (enabled: boolean) => {
     if (!activeConvId.value) return;
     toggleBypassPermissions(activeConvId.value, enabled, PORT);
-    addSystemMsg(activeConvId.value, enabled
-      ? "**Bypass ON** — Tool permissions auto-approved. Session restarting..."
-      : "**Bypass OFF** — You'll be asked to approve each tool use.");
+    addSystemMsg(activeConvId.value, enabled ? t("bypass.on") : t("bypass.off"));
   };
 
   // Warming countdown timer
@@ -207,14 +183,13 @@ export function App() {
         error: data.error,
       });
     } catch {
-      // Silently fail — update check is non-critical
       setUpdateInfo((prev) => prev ? { ...prev, checking: false } : null);
     }
   };
 
   useEffect(() => {
     checkUpdate();
-    const timer = setInterval(checkUpdate, 30 * 60 * 1000); // every 30 min
+    const timer = setInterval(checkUpdate, 30 * 60 * 1000);
     return () => clearInterval(timer);
   }, []);
 
@@ -225,8 +200,21 @@ export function App() {
 
   const isStreaming = active?.status === "Thinking..." || active?.status === "Streaming..." || active?.agentStatus === "warming";
 
+  // Onboarding card descriptions
+  const onboardCards = [
+    { icon: "🔍", titleKey: "onboard.analyzeTitle", descKey: "onboard.analyzeDesc", text: t("onboard.analyzeDesc") },
+    { icon: "📝", titleKey: "onboard.docTitle", descKey: "onboard.docDesc", text: t("onboard.docDesc") },
+    { icon: "🐛", titleKey: "onboard.debugTitle", descKey: "onboard.debugDesc", text: t("onboard.debugDesc") },
+    { icon: "🌐", titleKey: "onboard.searchTitle", descKey: "onboard.searchDesc", text: t("onboard.searchDesc") },
+  ];
+
   return (
     <div class="app">
+      <div class="lang-bar">
+        <button class="lang-btn" onClick={toggleLang} title="Switch language / 切换语言">
+          {t("lang.switch")}
+        </button>
+      </div>
       <ConversationTabs
         conversations={conversations.value}
         activeId={activeConvId.value}
@@ -263,11 +251,21 @@ export function App() {
             onToggleBypass={handleToggleBypass}
           />
           <footer class="status-bar">
-            <span>{active.status}</span>
+            <span>{(() => {
+              const s = active.status;
+              if (s === "Ready") return t("status.ready");
+              if (s === "Connecting...") return t("status.connecting");
+              if (s === "Thinking...") return t("status.thinking");
+              if (s === "Streaming...") return t("status.streaming");
+              if (s.startsWith("Reconnecting")) return t("status.reconnecting");
+              if (s === "Connection lost — refresh to retry") return t("status.connectionLost");
+              if (s === "Restored") return t("status.restored");
+              return s;
+            })()}</span>
             <div style="display:flex;gap:8px;align-items:center">
               {updateInfo?.hasUpdate && (
                 <button class="update-btn" onClick={handleUpdate} title={`v${updateInfo.current} → v${updateInfo.latest}. Click to download.`}>
-                  Update v{updateInfo.latest}
+                  {t("misc.update", { version: updateInfo.latest })}
                 </button>
               )}
               <a
@@ -276,16 +274,16 @@ export function App() {
                 class="upgrade-btn"
                 title="Get Pro: 200+ skills, auto-start, 3 devices"
               >
-                Upgrade to Pro
+                {t("misc.upgrade")}
               </a>
               {active.agentStatus === "warming" && (
-                <span class="status-bar-agent">⟳ Warming... {warmingSec}s（通常 15-30s）</span>
+                <span class="status-bar-agent">⟳ {t("agent.warmingShort")} {warmingSec}s（通常 15-30s）</span>
               )}
               {active.pendingPermission && (
-                <span class="status-bar-pending">⏳ Permission required</span>
+                <span class="status-bar-pending">⏳ {t("status.permissionReq")}</span>
               )}
               {!active.connected && (
-                <span class="status-bar-pending disconnected">⟳ Reconnecting...</span>
+                <span class="status-bar-pending disconnected">{t("misc.reconnecting")}</span>
               )}
             </div>
           </footer>
@@ -293,31 +291,24 @@ export function App() {
       ) : (
         <main class="main">
           <div class="empty-state">
-            <h2>Deep Desk</h2>
-            <p class="empty-subtitle">AI 编程助手，用自然语言完成任务</p>
+            <h2>{t("app.title")}</h2>
+            <p class="empty-subtitle">{t("app.subtitle")}</p>
             <div class="onboard-grid">
-              <div class="onboard-card" onClick={() => { newConversation(PORT); setTimeout(() => { const ta = document.querySelector('textarea') as HTMLTextAreaElement; if (ta) { ta.value = '帮我分析当前项目结构'; ta.dispatchEvent(new Event('input', {bubbles:true})); } }, 500); }}>
-                <span class="onboard-icon">🔍</span>
-                <strong>代码分析</strong>
-                <span>帮我分析当前项目结构</span>
-              </div>
-              <div class="onboard-card" onClick={() => { newConversation(PORT); setTimeout(() => { const ta = document.querySelector('textarea') as HTMLTextAreaElement; if (ta) { ta.value = '帮我写一个周报，总结本周工作'; ta.dispatchEvent(new Event('input', {bubbles:true})); } }, 500); }}>
-                <span class="onboard-icon">📝</span>
-                <strong>文档写作</strong>
-                <span>帮我写周报、总结本周工作</span>
-              </div>
-              <div class="onboard-card" onClick={() => { newConversation(PORT); setTimeout(() => { const ta = document.querySelector('textarea') as HTMLTextAreaElement; if (ta) { ta.value = '这段代码有什么问题？如何优化？'; ta.dispatchEvent(new Event('input', {bubbles:true})); } }, 500); }}>
-                <span class="onboard-icon">🐛</span>
-                <strong>Debug 排错</strong>
-                <span>这段代码有什么问题？如何优化？</span>
-              </div>
-              <div class="onboard-card" onClick={() => { newConversation(PORT); setTimeout(() => { const ta = document.querySelector('textarea') as HTMLTextAreaElement; if (ta) { ta.value = '帮我查一下最新的 React 19 有哪些新特性'; ta.dispatchEvent(new Event('input', {bubbles:true})); } }, 500); }}>
-                <span class="onboard-icon">🌐</span>
-                <strong>联网搜索</strong>
-                <span>帮我查最新技术资讯</span>
-              </div>
+              {onboardCards.map((card) => (
+                <div class="onboard-card" key={card.descKey} onClick={() => {
+                  newConversation(PORT);
+                  setTimeout(() => {
+                    const ta = document.querySelector('textarea') as HTMLTextAreaElement;
+                    if (ta) { ta.value = card.text; ta.dispatchEvent(new Event('input', { bubbles: true })); }
+                  }, 500);
+                }}>
+                  <span class="onboard-icon">{card.icon}</span>
+                  <strong>{t(card.titleKey)}</strong>
+                  <span>{t(card.descKey)}</span>
+                </div>
+              ))}
             </div>
-            <p class="empty-hint">点击上方卡片快速开始，或在输入框输入你的问题</p>
+            <p class="empty-hint">{t("misc.emptyHint")}</p>
           </div>
         </main>
       )}
