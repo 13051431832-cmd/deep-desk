@@ -46,6 +46,33 @@ if [ "${1:-}" = "--promote" ]; then
     echo "  (Windows package not available — skipping)"
   fi
 
+  # Upload auto-update artifacts
+  BUNDLE_DIR="$SCRIPT_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/macos"
+  TAR_GZ=$(ls "$BUNDLE_DIR"/*.app.tar.gz 2>/dev/null | head -1 || echo "")
+  SIG=$(ls "$BUNDLE_DIR"/*.app.tar.gz.sig 2>/dev/null | head -1 || echo "")
+  if [ -n "$TAR_GZ" ] && [ -n "$SIG" ]; then
+    ossutil cp "$TAR_GZ" "$CDN_BASE/Deep-Desk-${CURRENT}_aarch64.app.tar.gz" -f | tail -1
+    SIG_CONTENT=$(cat "$SIG")
+    # Create latest.json for Tauri updater
+    cat > /tmp/latest.json << JSONEOF
+{
+  "version": "${CURRENT}",
+  "notes": "Auto-update to v${CURRENT}",
+  "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "platforms": {
+    "darwin-aarch64": {
+      "signature": "${SIG_CONTENT}",
+      "url": "https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-${CURRENT}_aarch64.app.tar.gz"
+    }
+  }
+}
+JSONEOF
+    ossutil cp /tmp/latest.json "$CDN_BASE/latest.json" -f | tail -1
+    echo "  ✓ Auto-update artifacts uploaded"
+  else
+    echo "  (Auto-update artifacts not found — skipping)"
+  fi
+
   echo ""
   echo "╔══════════════════════════════════════╗"
   echo "║  v$CURRENT is now STABLE             ║"

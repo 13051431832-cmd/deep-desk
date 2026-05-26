@@ -22,6 +22,7 @@ import { InputBox } from "./components/InputBox";
 import { ConversationTabs } from "./components/ConversationTabs";
 import { t, lang, toggleLang } from "./i18n";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { check } from "@tauri-apps/plugin-updater";
 
 const PORT = 3456;
 
@@ -164,34 +165,49 @@ export function App() {
     return () => clearInterval(t);
   }, [active?.agentStatus]);
 
-  // ── Update check ───────────────────────────────────────────────────
+  // ── Tauri auto-updater ─────────────────────────────────────────────
   const [updateInfo, setUpdateInfo] = useState<{
     hasUpdate: boolean; latest: string; current: string;
-    macUrl: string; winUrl: string; checking: boolean; error?: string;
+    downloading: boolean;
   } | null>(null);
 
   const checkUpdate = async () => {
     try {
-      const resp = await fetch("/api/check-update");
-      const data = await resp.json();
-      setUpdateInfo({
-        hasUpdate: data.hasUpdate,
-        latest: data.latest || data.current,
-        current: data.current,
-        macUrl: data.macUrl || "",
-        winUrl: data.winUrl || "",
-        checking: false,
-        error: data.error,
-      });
+      const update = await check();
+      if (update) {
+        setUpdateInfo({
+          hasUpdate: true,
+          latest: update.version,
+          current: update.currentVersion,
+          downloading: false,
+        });
+      } else {
+        setUpdateInfo((prev) => prev ? { ...prev, hasUpdate: false } : null);
+      }
     } catch {
-      setUpdateInfo((prev) => prev ? { ...prev, checking: false } : null);
+      // Updater plugin not available (e.g., dev mode in browser)
+    }
+  };
+
+  const handleInstallUpdate = async () => {
+    try {
+      setUpdateInfo((prev) => prev ? { ...prev, downloading: true } : null);
+      const update = await check();
+      if (update) {
+        await update.downloadAndInstall();
+        // App will restart automatically after install
+      }
+    } catch (e) {
+      console.error("Update failed:", e);
+      setUpdateInfo((prev) => prev ? { ...prev, downloading: false } : null);
     }
   };
 
   useEffect(() => {
-    checkUpdate();
-    const timer = setInterval(checkUpdate, 30 * 60 * 1000);
-    return () => clearInterval(timer);
+    // Check on startup, then every 30 min
+    const timer = setTimeout(checkUpdate, 3000); // delay to let server start
+    const interval = setInterval(checkUpdate, 30 * 60 * 1000);
+    return () => { clearTimeout(timer); clearInterval(interval); };
   }, []);
 
   const handleExternalUrl = (url: string) => {
@@ -269,8 +285,13 @@ export function App() {
             })()}</span>
             <div style="display:flex;gap:8px;align-items:center">
               {updateInfo?.hasUpdate && (
-                <button class="update-btn" onClick={handleUpdate} title={`v${updateInfo.current} → v${updateInfo.latest}. Click to download.`}>
-                  {t("misc.update", { version: updateInfo.latest })}
+                <button
+                  class="update-btn"
+                  onClick={handleInstallUpdate}
+                  disabled={updateInfo.downloading}
+                  title={updateInfo.downloading ? "Downloading..." : `v${updateInfo.current} → v${updateInfo.latest}. Click to install.`}
+                >
+                  {updateInfo.downloading ? "⟳ Downloading..." : t("misc.update", { version: updateInfo.latest })}
                 </button>
               )}
               <button

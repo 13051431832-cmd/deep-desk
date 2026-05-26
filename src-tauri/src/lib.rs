@@ -15,6 +15,7 @@ mod server;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {

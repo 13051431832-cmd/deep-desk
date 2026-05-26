@@ -84,9 +84,16 @@ case "$TARGET" in
   macos)
     ensure_bun "binaries/bun-darwin-aarch64"
     gen_macos_config "aarch64" "binaries/bun-darwin-aarch64/bun"
-    cargo tauri build --target aarch64-apple-darwin 2>&1 | grep -E "(Finished|Error|Bundling)" || true
+    KEY_PATH="${HOME}/.deepdesk-updater-key"
+    if [ -f "$KEY_PATH" ]; then
+      export TAURI_SIGNING_PRIVATE_KEY="$(cat "$KEY_PATH")"
+      export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
+    fi
+    cargo tauri build --target aarch64-apple-darwin 2>&1 | grep -E "(Finished|Error|Bundling|update)" || true
     echo "  ✓ macOS arm64 build complete"
     ls -lh "$SCRIPT_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/"*.dmg 2>/dev/null || echo "  (DMG in bundle/dmg/)"
+    ls -lh "$SCRIPT_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/"*.tar.gz 2>/dev/null || true
+    ls -lh "$SCRIPT_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/"*.sig 2>/dev/null || true
     ;;
   macos-x64)
     ensure_bun "binaries/bun-darwin-x64"
