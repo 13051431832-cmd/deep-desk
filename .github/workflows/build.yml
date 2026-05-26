@@ -1,0 +1,169 @@
+name: Build Deep Desk
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  # ── macOS aarch64 (Apple Silicon) ──────────────────────────────────
+  macos-aarch64:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: latest }
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with: { targets: "aarch64-apple-darwin" }
+
+      - name: Build frontend
+        run: cd web && bun install && bun run build
+
+      - name: Download Bun binary (macOS arm64)
+        run: |
+          mkdir -p src-tauri/binaries/bun-darwin-aarch64
+          curl -fsSL "https://github.com/oven-sh/bun/releases/latest/download/bun-darwin-aarch64.zip" -o /tmp/bun.zip
+          unzip -o /tmp/bun.zip -d src-tauri/binaries/bun-darwin-aarch64/
+          chmod +x src-tauri/binaries/bun-darwin-aarch64/bun
+
+      - name: Tauri build
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --target aarch64-apple-darwin
+          includeDebug: false
+          includeRelease: false
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: Deep-Desk-macOS-arm64
+          path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+
+  # ── macOS x86_64 (Intel) ──────────────────────────────────────────
+  macos-x64:
+    runs-on: macos-13  # Intel runner
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: latest }
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with: { targets: "x86_64-apple-darwin" }
+
+      - name: Build frontend
+        run: cd web && bun install && bun run build
+
+      - name: Download Bun binary (macOS x64)
+        run: |
+          mkdir -p src-tauri/binaries/bun-darwin-x64
+          curl -fsSL "https://github.com/oven-sh/bun/releases/latest/download/bun-darwin-x64.zip" -o /tmp/bun.zip
+          unzip -o /tmp/bun.zip -d src-tauri/binaries/bun-darwin-x64/
+          chmod +x src-tauri/binaries/bun-darwin-x64/bun
+
+      - name: Tauri build
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --target x86_64-apple-darwin
+          includeDebug: false
+          includeRelease: false
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: Deep-Desk-macOS-x64
+          path: src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
+
+  # ── Windows x86_64 ────────────────────────────────────────────────
+  windows-x64:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: latest }
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build frontend
+        run: cd web && bun install && bun run build
+        shell: bash
+
+      - name: Download Bun binary (Windows x64)
+        shell: bash
+        run: |
+          mkdir -p src-tauri/binaries/bun-windows-x64
+          curl -fsSL "https://github.com/oven-sh/bun/releases/latest/download/bun-windows-x64.zip" -o /tmp/bun.zip
+          unzip -o /tmp/bun.zip -d src-tauri/binaries/bun-windows-x64/
+
+      - name: Tauri build
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --target x86_64-pc-windows-msvc
+          includeDebug: false
+          includeRelease: false
+
+      - name: Upload MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: Deep-Desk-Windows-x64
+          path: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+
+  # ── Release: upload all artifacts to CDN ────────────────────────────
+  release:
+    needs: [macos-aarch64, macos-x64, windows-x64]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts }
+
+      - name: Upload to OSS
+        env:
+          OSS_ACCESS_KEY: ${{ secrets.OSS_ACCESS_KEY }}
+          OSS_SECRET_KEY: ${{ secrets.OSS_SECRET_KEY }}
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          echo "Releasing v$VERSION"
+
+          # Install ossutil
+          curl -fsSL https://gosspublic.alicdn.com/ossutil/install.sh | bash
+
+          ~/.local/bin/ossutil config --access-key-id "$OSS_ACCESS_KEY" --access-key-secret "$OSS_SECRET_KEY" --endpoint oss-cn-hangzhou.aliyuncs.com
+
+          # Upload macOS arm64 DMG as latest
+          DMG_ARM64=$(find artifacts/Deep-Desk-macOS-arm64 -name "*.dmg" | head -1)
+          if [ -n "$DMG_ARM64" ]; then
+            ~/.local/bin/ossutil cp "$DMG_ARM64" oss://ccb-store/deepdesk/Deep-Desk-latest.dmg -f
+            ~/.local/bin/ossutil cp "$DMG_ARM64" "oss://ccb-store/deepdesk/Deep-Desk-${VERSION}.dmg"
+          fi
+
+          # Upload macOS x64 DMG
+          DMG_X64=$(find artifacts/Deep-Desk-macOS-x64 -name "*.dmg" | head -1)
+          if [ -n "$DMG_X64" ]; then
+            ~/.local/bin/ossutil cp "$DMG_X64" "oss://ccb-store/deepdesk/Deep-Desk-${VERSION}-intel.dmg"
+          fi
+
+          # Upload Windows MSI
+          MSI=$(find artifacts/Deep-Desk-Windows-x64 -name "*.msi" | head -1)
+          if [ -n "$MSI" ]; then
+            ~/.local/bin/ossutil cp "$MSI" oss://ccb-store/deepdesk/Deep-Desk-setup.msi -f
+            ~/.local/bin/ossutil cp "$MSI" "oss://ccb-store/deepdesk/Deep-Desk-setup-${VERSION}.msi"
+          fi
+
+          # Update version.json
+          echo "{\"version\":\"$VERSION\",\"macUrl\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-latest.dmg\",\"winUrl\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-setup.msi\"}" > version.json
+          ~/.local/bin/ossutil cp version.json oss://ccb-store/deepdesk/version.json -f
+
+          echo "✓ v$VERSION released"

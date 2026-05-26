@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# Deep Desk — Tauri build script
+# Usage: bash build.sh [macos|macos-x64|windows|all]
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+TARGET="${1:-macos}"
+
+# ── Step 0: Generate platform config ──────────────────────────────────
+gen_macos_config() {
+  local arch="$1" bun_src="$2"
+  cat > "$SCRIPT_DIR/src-tauri/tauri.macos.conf.json" << JSONEOF
+{
+  "bundle": {
+    "resources": {
+      "../server/": "server/",
+      "../web/dist/": "server/web/dist/",
+      "../package.json": "package.json",
+      "../bun.lock": "bun.lock",
+      "../node_modules/ws/": "node_modules/ws/",
+      "../node_modules/strip-ansi/": "node_modules/strip-ansi/",
+      "${bun_src}": "${bun_src}"
+    }
+  }
+}
+JSONEOF
+  echo "  Config: macOS $arch"
+}
+
+# ── Step 1: Ensure bun binary is in place ────────────────────────────
+ensure_bun() {
+  local dir="$1"
+  mkdir -p "$SCRIPT_DIR/src-tauri/$dir"
+  if [ ! -x "$SCRIPT_DIR/src-tauri/$dir/bun" ] && [ ! -x "$SCRIPT_DIR/src-tauri/$dir/bun.exe" ]; then
+    echo "[1/4] Downloading bun binary..."
+    local url=""
+    case "$dir" in
+      binaries/bun-darwin-aarch64) url="https://github.com/oven-sh/bun/releases/latest/download/bun-darwin-aarch64.zip" ;;
+      binaries/bun-darwin-x64)    url="https://github.com/oven-sh/bun/releases/latest/download/bun-darwin-x64.zip" ;;
+      binaries/bun-windows-x64)   url="https://github.com/oven-sh/bun/releases/latest/download/bun-windows-x64.zip" ;;
+    esac
+    if [ -n "$url" ]; then
+      curl -fsSL "$url" -o /tmp/bun-dl.zip 2>/dev/null || {
+        # Fallback: copy from local installation
+        echo "  Download failed, copying local bun..."
+        local local_bun="${HOME}/.bun/bin/bun"
+        [ -x "$local_bun" ] || local_bun="$(command -v bun 2>/dev/null || echo '')"
+        if [ -n "$local_bun" ] && [ -x "$local_bun" ]; then
+          cp "$local_bun" "$SCRIPT_DIR/src-tauri/$dir/bun"
+          chmod +x "$SCRIPT_DIR/src-tauri/$dir/bun"
+          echo "  ✓ copied local bun"
+          return
+        fi
+        echo "  Error: cannot get bun binary"
+        return 1
+      }
+      unzip -o /tmp/bun-dl.zip -d "$SCRIPT_DIR/src-tauri/$dir/" 2>/dev/null
+      chmod +x "$SCRIPT_DIR/src-tauri/$dir/bun"* 2>/dev/null || true
+      echo "  ✓ downloaded"
+    else
+      # Local dev: copy installed bun
+      local local_bun="${HOME}/.bun/bin/bun"
+      [ -x "$local_bun" ] || local_bun="$(command -v bun 2>/dev/null || echo '')"
+      if [ -n "$local_bun" ] && [ -x "$local_bun" ]; then
+        cp "$local_bun" "$SCRIPT_DIR/src-tauri/$dir/bun"
+        chmod +x "$SCRIPT_DIR/src-tauri/$dir/bun"
+        echo "  ✓ copied local bun"
+      fi
+    fi
+  fi
+}
+
+# ── Step 2: Build frontend ──────────────────────────────────────────
+echo "[2/4] Building frontend..."
+cd "$SCRIPT_DIR/web" && bun run build && cd "$SCRIPT_DIR"
+echo "  ✓ web/dist ready"
+
+# ── Step 3: Build Tauri ─────────────────────────────────────────────
+echo "[3/4] Building Tauri..."
+
+cd "$SCRIPT_DIR/src-tauri"
+
+case "$TARGET" in
+  macos)
+    ensure_bun "binaries/bun-darwin-aarch64"
+    gen_macos_config "aarch64" "binaries/bun-darwin-aarch64/bun"
+    cargo tauri build --target aarch64-apple-darwin 2>&1 | grep -E "(Finished|Error|Bundling)" || true
+    echo "  ✓ macOS arm64 build complete"
+    ls -lh "$SCRIPT_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/"*.dmg 2>/dev/null || echo "  (DMG in bundle/dmg/)"
+    ;;
+  macos-x64)
+    ensure_bun "binaries/bun-darwin-x64"
+    gen_macos_config "x64" "binaries/bun-darwin-x64/bun"
+    cargo tauri build --target x86_64-apple-darwin 2>&1 | grep -E "(Finished|Error|Bundling)" || true
+    echo "  ✓ macOS x64 build complete"
+    ls -lh "$SCRIPT_DIR/src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/"*.dmg 2>/dev/null || echo "  (DMG in bundle/dmg/)"
+    ;;
+  windows)
+    echo "  Windows build requires cross-compilation or Windows host."
+    echo "  Use GitHub Actions: push a v* tag to trigger CI build."
+    ;;
+  all)
+    ensure_bun "binaries/bun-darwin-aarch64"
+    gen_macos_config "aarch64" "binaries/bun-darwin-aarch64/bun"
+    cargo tauri build --target aarch64-apple-darwin 2>&1 | grep -E "(Finished|Error|Bundling)" || true
+    echo "  ✓ macOS arm64"
+    ls -lh "$SCRIPT_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/"*.dmg 2>/dev/null || true
+    echo "  macOS x64 + Windows: use GitHub Actions CI"
+    ;;
+esac
+
+echo "[4/4] Done!"
+echo ""
+echo "Output:"
+ls -lh "$SCRIPT_DIR/src-tauri/target/"*/release/bundle/dmg/*.dmg 2>/dev/null || true

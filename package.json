@@ -1,0 +1,19 @@
+{
+  "name": "claude-code-web",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun server/src/server.ts",
+    "build:web": "cd web && bun run build",
+    "start": "bun server/src/server.ts"
+  },
+  "dependencies": {
+    "node-pty": "^1.0.0",
+    "strip-ansi": "^7.1.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.0"
+  }
+}

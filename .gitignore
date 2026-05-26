@@ -1,0 +1,9 @@
+node_modules/
+web/dist/
+.DS_Store
+*.dmg
+rw.*.dmg
+.env
+src-tauri/target/
+src-tauri/binaries/bun*
+src-tauri/gen/
