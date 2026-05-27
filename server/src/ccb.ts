@@ -7,8 +7,13 @@ import { existsSync, mkdirSync } from "fs";
 const home = homedir();
 const MODULE_DIR = fileURLToPath(new URL(".", import.meta.url));
 
+// Bundled bun binary (falls back to system bun)
+const BUNDLED_BUN = join(MODULE_DIR, "../../binaries",
+  process.platform === "win32" ? "bun-windows-x64/bun.exe" : "bun-darwin-aarch64/bun");
+const SYSTEM_BUN = join(home, ".bun", "bin", process.platform === "win32" ? "bun.exe" : "bun");
+const BUN_BIN = existsSync(BUNDLED_BUN) ? BUNDLED_BUN : SYSTEM_BUN;
+
 const CCB_SCRIPT = join(home, "node_modules", "claude-code-best", "dist", "cli.js");
-const BUN_BIN = join(home, ".bun", "bin", "bun");
 const CWD = home;
 const MCP_CONFIG = join(home, ".claude", "mcp.json");
 
@@ -272,7 +277,28 @@ export function spawnSession(callbacks: {
 
   // ── Start ccb process + wire up readers ──────────────────────────────
 
+  // Auto-install claude-code-best if not present
+  function ensureCCB(): boolean {
+    if (existsSync(CCB_SCRIPT)) return true;
+    callbacks.onError("Installing AI engine (one-time setup, ~30s)...");
+    try {
+      const result = Bun.spawnSync([BUN_BIN, "install", "-g", "claude-code-best"], {
+        cwd: home, env: process.env as Record<string, string>,
+        stdout: "pipe", stderr: "pipe",
+      });
+      if (result.exitCode === 0 && existsSync(CCB_SCRIPT)) {
+        callbacks.onError("Engine installed. Starting...");
+        return true;
+      }
+      callbacks.onError(`Engine install failed (exit ${result.exitCode}). Check network.`);
+    } catch (e: any) {
+      callbacks.onError(`Engine install error: ${e.message}`);
+    }
+    return false;
+  }
+
   function startProc() {
+    if (!ensureCCB()) { callbacks.onError("Cannot start: AI engine not available."); return; }
     const bypass = options?.bypassPermissions !== false; // default true for backward compat
     const plan = options?.planMode || false;
     const args: string[] = [
