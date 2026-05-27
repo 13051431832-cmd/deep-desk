@@ -919,6 +919,60 @@ body {
   background: rgba(240, 136, 62, 0.15);
 }
 
+/* === Settings Tabs === */
+.settings-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.settings-tab {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s;
+}
+.settings-tab:hover { color: var(--text-primary); }
+.settings-tab--active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* === MCP Toggles === */
+.mcp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.mcp-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-size: 13px;
+}
+.mcp-toggle:hover { border-color: var(--text-muted); }
+.mcp-name {
+  font-weight: 600;
+  color: var(--accent);
+  min-width: 90px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.mcp-desc {
+  color: var(--text-muted);
+  font-size: 11px;
+  flex: 1;
+}
+
 /* === WeChat Contact === */
 .wechat-contact {
   color: var(--text-muted);

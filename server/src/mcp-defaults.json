@@ -1,0 +1,52 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@anthropic-ai/mcp-server-filesystem", "/Users/$USER/Desktop"],
+      "enabled": true,
+      "description": "读写本地文件"
+    },
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp"],
+      "enabled": false,
+      "description": "控制浏览器、截图、自动化测试"
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@anthropic-ai/mcp-server-github"],
+      "enabled": false,
+      "description": "GitHub Issues、PR、代码搜索"
+    },
+    "postgres": {
+      "command": "npx",
+      "args": ["-y", "@anthropic-ai/mcp-server-postgres", "$DATABASE_URL"],
+      "enabled": false,
+      "description": "PostgreSQL 数据库查询（需设 DATABASE_URL）"
+    },
+    "brave-search": {
+      "command": "npx",
+      "args": ["-y", "@anthropic-ai/mcp-server-brave-search"],
+      "enabled": false,
+      "description": "Brave 搜索引擎（需设 BRAVE_API_KEY）"
+    },
+    "memory": {
+      "command": "npx",
+      "args": ["-y", "@anthropic-ai/mcp-server-memory"],
+      "enabled": false,
+      "description": "持久化知识图谱记忆"
+    },
+    "puppeteer": {
+      "command": "npx",
+      "args": ["-y", "@anthropic-ai/mcp-server-puppeteer"],
+      "enabled": false,
+      "description": "Puppeteer 浏览器自动化"
+    },
+    "slack": {
+      "command": "npx",
+      "args": ["-y", "@anthropic-ai/mcp-server-slack"],
+      "enabled": false,
+      "description": "Slack 消息和频道（需设 SLACK_BOT_TOKEN）"
+    }
+  }
+}

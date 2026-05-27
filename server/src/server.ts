@@ -24,6 +24,16 @@ try { CURRENT_VERSION = (await Bun.file(VERSION_FILE).text()).trim(); } catch { 
 mkdirSync(VISION_UPLOAD_DIR, { recursive: true });
 mkdirSync(CONVERSATIONS_DIR, { recursive: true });
 const DEEPDESK_ENV = join(homedir(), ".deepdesk.env");
+const MCP_DEFAULTS = join(MODULE_DIR, "mcp-defaults.json");
+
+// Copy default MCP config on first run
+if (!existsSync(MCP_CONFIG_LOCAL)) {
+  try {
+    const defaults = await Bun.file(MCP_DEFAULTS).text();
+    mkdirSync(join(homedir(), ".claude"), { recursive: true });
+    await Bun.write(MCP_CONFIG_LOCAL, defaults);
+  } catch { /* bundled defaults not available */ }
+}
 
 // ── Session management ────────────────────────────────────────────────
 // Sessions live by conversation ID. Multiple browser tabs share one session.
@@ -180,6 +190,33 @@ Bun.serve({
           current: CURRENT_VERSION, latest: null, hasUpdate: false,
           error: err.message || "Check failed",
         }), { headers: { "Content-Type": "application/json" } });
+      }
+    }
+
+    // ── MCP Management API ──────────────────────────────────────────
+    if (url.pathname === "/api/mcp") {
+      if (req.method === "GET") {
+        try {
+          const raw = await Bun.file(MCP_CONFIG_LOCAL).text();
+          const config = JSON.parse(raw);
+          const servers: Record<string, any> = {};
+          for (const [name, s] of Object.entries(config.mcpServers || {})) {
+            servers[name] = { enabled: (s as any).enabled !== false, description: (s as any).description || "" };
+          }
+          return new Response(JSON.stringify({ servers }), { headers: { "Content-Type": "application/json" } });
+        } catch { return new Response(JSON.stringify({ servers: {} }), { headers: { "Content-Type": "application/json" } }); }
+      }
+      if (req.method === "POST") {
+        try {
+          const body = await req.json() as any;
+          const raw = await Bun.file(MCP_CONFIG_LOCAL).text();
+          const config = JSON.parse(raw);
+          for (const [name, enabled] of Object.entries(body.toggles || {})) {
+            if (config.mcpServers?.[name]) config.mcpServers[name].enabled = enabled;
+          }
+          await Bun.write(MCP_CONFIG_LOCAL, JSON.stringify(config, null, 2));
+          return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+        } catch (err: any) { return new Response(JSON.stringify({ error: err.message }), { status: 500 }); }
       }
     }
 
