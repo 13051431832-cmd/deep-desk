@@ -237,7 +237,9 @@ Bun.serve({
     if (url.pathname === "/api/settings") {
       if (req.method === "GET") {
         const hasDeepSeek = !!(process.env.DEEPSEEK_API_KEY || process.env.OPENAI_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
+        const provider = process.env.OLLAMA_MODEL ? "ollama" : "deepseek";
         return new Response(JSON.stringify({
+          provider,
           deepseekKey: hasDeepSeek ? "••••configured" : "",
           qwenKey: (process.env.QWEN_API_KEY || process.env.DASHSCOPE_API_KEY) ? "••••configured" : "",
           ollamaModel: process.env.OLLAMA_MODEL || "",
@@ -255,17 +257,28 @@ Bun.serve({
             const eq = line.indexOf("=");
             if (eq > 0) envMap[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
           }
-          if (body.deepseekKey) { envMap.DEEPSEEK_API_KEY = body.deepseekKey; envMap.OPENAI_API_KEY = body.deepseekKey; }
+          // Provider switching
+          if (body.provider === "ollama" && body.ollamaModel) {
+            envMap.OLLAMA_MODEL = body.ollamaModel;
+            if (body.ollamaUrl) envMap.OLLAMA_URL = body.ollamaUrl;
+            delete envMap.DEEPSEEK_API_KEY; delete envMap.OPENAI_API_KEY;
+          } else if (body.provider === "deepseek") {
+            delete envMap.OLLAMA_MODEL;
+            process.env.OLLAMA_MODEL = "";
+            if (body.deepseekKey && !body.deepseekKey.startsWith("••••")) {
+              envMap.DEEPSEEK_API_KEY = body.deepseekKey; envMap.OPENAI_API_KEY = body.deepseekKey;
+            }
+          }
           if (body.qwenKey) envMap.QWEN_API_KEY = body.qwenKey;
-          if (body.ollamaModel) { envMap.OLLAMA_MODEL = body.ollamaModel; }
-          else if (body.ollamaModel === "") { delete envMap.OLLAMA_MODEL; process.env.OLLAMA_MODEL = ""; }
-          if (body.ollamaUrl) envMap.OLLAMA_URL = body.ollamaUrl;
           const newContent = Object.entries(envMap).map(([k, v]) => `${k}=${v}`).join("\n") + "\n";
           await Bun.write(DEEPDESK_ENV, newContent);
-          // Also set in current process so GET reflects immediately
-          if (body.deepseekKey) { process.env.DEEPSEEK_API_KEY = body.deepseekKey; process.env.OPENAI_API_KEY = body.deepseekKey; }
+          // Also set in current process
+          if (body.provider === "ollama" && body.ollamaModel) process.env.OLLAMA_MODEL = body.ollamaModel;
+          if (body.provider === "deepseek") process.env.OLLAMA_MODEL = "";
+          if (body.deepseekKey && !body.deepseekKey.startsWith("••••")) {
+            process.env.DEEPSEEK_API_KEY = body.deepseekKey; process.env.OPENAI_API_KEY = body.deepseekKey;
+          }
           if (body.qwenKey) process.env.QWEN_API_KEY = body.qwenKey;
-          if (body.ollamaModel) process.env.OLLAMA_MODEL = body.ollamaModel;
           return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
         } catch (err: any) {
           return new Response(JSON.stringify({ error: err.message }), { status: 500 });

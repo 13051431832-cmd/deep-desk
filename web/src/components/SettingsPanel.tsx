@@ -3,18 +3,19 @@ import { useState, useEffect } from "preact/hooks";
 interface MCPInfo { enabled: boolean; description: string; }
 
 export function SettingsPanel({ onClose }: { onClose: () => void }) {
-  const [tab, setTab] = useState<"keys" | "ollama" | "mcp">("keys");
-  // Keys
+  const [tab, setTab] = useState<"provider" | "mcp">("provider");
+  // Provider
+  const [provider, setProvider] = useState<"deepseek" | "ollama">("deepseek");
+  // DeepSeek keys
   const [deepseekKey, setDeepseekKey] = useState("");
   const [qwenKey, setQwenKey] = useState("");
   const [keyStatus, setKeyStatus] = useState<"loading" | "ready" | "saving" | "saved">("loading");
-  const [hasConfig, setHasConfig] = useState(false);
   // Ollama
   const [ollamaModel, setOllamaModel] = useState("");
   const [ollamaUrl, setOllamaUrl] = useState("http://localhost:11434/v1");
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
   const [ollamaDetecting, setOllamaDetecting] = useState(false);
-  const [ollamaError, setOllamaError] = useState("");
+  const [ollamaStatus, setOllamaStatus] = useState("");
   // MCP
   const [mcpServers, setMcpServers] = useState<Record<string, MCPInfo>>({});
   const [mcpLoading, setMcpLoading] = useState(true);
@@ -23,7 +24,8 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
     fetch("/api/settings")
       .then(r => r.json())
       .then(d => {
-        setHasConfig(!!d.deepseekKey || !!d.qwenKey);
+        setProvider(d.provider || "deepseek");
+        setDeepseekKey(d.deepseekKey ? "••••configured" : "");
         if (d.ollamaModel) setOllamaModel(d.ollamaModel);
         if (d.ollamaUrl) setOllamaUrl(d.ollamaUrl);
         setKeyStatus("ready");
@@ -35,41 +37,42 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
       .catch(() => setMcpLoading(false));
   }, []);
 
-  const saveKeys = async () => {
+  const saveDeepSeek = async () => {
     setKeyStatus("saving");
     try {
       const resp = await fetch("/api/settings", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ deepseekKey: deepseekKey || undefined, qwenKey: qwenKey || undefined }),
+        body: JSON.stringify({ provider: "deepseek", deepseekKey: deepseekKey.startsWith("••••") ? undefined : (deepseekKey || undefined), qwenKey: qwenKey || undefined }),
       });
-      if (resp.ok) { setKeyStatus("saved"); setHasConfig(true); setDeepseekKey(""); setQwenKey(""); }
+      if (resp.ok) { setKeyStatus("saved"); setDeepseekKey("••••configured"); setQwenKey(""); }
     } catch { setKeyStatus("ready"); }
   };
 
   const saveOllama = async () => {
+    setOllamaStatus("saving");
     try {
-      await fetch("/api/settings", {
+      const resp = await fetch("/api/settings", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ollamaModel: ollamaModel || "" }),
+        body: JSON.stringify({ provider: "ollama", ollamaModel, ollamaUrl }),
       });
-      setOllamaError("✓ 已保存，新对话生效");
-      setTimeout(() => setOllamaError(""), 2000);
-    } catch {}
+      if (resp.ok) { setOllamaStatus("✓ 已保存，新对话生效"); setProvider("ollama"); }
+    } catch { setOllamaStatus("保存失败"); }
+    setTimeout(() => setOllamaStatus(""), 2000);
   };
 
   const detectOllama = async () => {
-    setOllamaDetecting(true); setOllamaError("");
+    setOllamaDetecting(true); setOllamaStatus("");
     try {
       const resp = await fetch("/api/ollama/models");
       const data = await resp.json();
       if (data.ok && data.models.length > 0) {
         setOllamaModels(data.models);
         if (!ollamaModel) setOllamaModel(data.models[0]);
-        setOllamaError(`检测到 ${data.models.length} 个模型`);
+        setOllamaStatus(`检测到 ${data.models.length} 个模型`);
       } else {
-        setOllamaError("未检测到 Ollama，请确认已安装并运行");
+        setOllamaStatus("未检测到 Ollama，请确认已安装并运行");
       }
-    } catch { setOllamaError("连接失败，请检查 Ollama 是否运行"); }
+    } catch { setOllamaStatus("连接失败"); }
     setOllamaDetecting(false);
   };
 
@@ -90,57 +93,64 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
         </div>
 
         <div class="settings-tabs">
-          <button class={`settings-tab ${tab === "keys" ? "settings-tab--active" : ""}`} onClick={() => setTab("keys")}>🔑 Keys</button>
-          <button class={`settings-tab ${tab === "ollama" ? "settings-tab--active" : ""}`} onClick={() => setTab("ollama")}>🦙 Ollama</button>
+          <button class={`settings-tab ${tab === "provider" ? "settings-tab--active" : ""}`} onClick={() => setTab("provider")}>🧠 Model</button>
           <button class={`settings-tab ${tab === "mcp" ? "settings-tab--active" : ""}`} onClick={() => setTab("mcp")}>🔌 MCP</button>
         </div>
 
-        {tab === "keys" && (
+        {tab === "provider" && (
           <div>
             <label class="settings-field">
-              <span>DeepSeek API Key {hasConfig ? "✅" : "⚠️"}</span>
-              <input type="password" placeholder={hasConfig ? "Already configured" : "sk-..."} value={deepseekKey} onInput={(e) => setDeepseekKey((e.target as HTMLInputElement).value)} />
+              <span>Provider</span>
+              <select class="settings-select" value={provider} onChange={(e) => setProvider((e.target as HTMLSelectElement).value as any)}>
+                <option value="deepseek">☁️ DeepSeek API (云端)</option>
+                <option value="ollama">🦙 Ollama (本地)</option>
+              </select>
             </label>
-            <label class="settings-field">
-              <span>QWEN Vision Key <em style="color:var(--text-muted)">(optional)</em></span>
-              <input type="password" placeholder="sk-..." value={qwenKey} onInput={(e) => setQwenKey((e.target as HTMLInputElement).value)} />
-            </label>
-            <button class="settings-save" onClick={saveKeys} disabled={keyStatus === "saving" || (!deepseekKey && !qwenKey)}>
-              {keyStatus === "saving" ? "Saving..." : keyStatus === "saved" ? "✓ Saved" : "Save"}
-            </button>
-            <p class="settings-note">Keys are saved to <code>~/.deepdesk.env</code>.</p>
-          </div>
-        )}
 
-        {tab === "ollama" && (
-          <div>
-            <p class="settings-desc">使用本地 Ollama 模型，完全离线，无需 API Key。</p>
-            <button class="settings-save" onClick={detectOllama} disabled={ollamaDetecting} style="margin-bottom:12px;background:var(--bg-card);color:var(--accent);border:1px solid var(--accent)">
-              {ollamaDetecting ? "检测中..." : "🔍 检测 Ollama 模型"}
-            </button>
-            {ollamaError && <p class="settings-note" style="color:var(--accent);margin-bottom:8px">{ollamaError}</p>}
-            {ollamaModels.length > 0 && (
-              <label class="settings-field">
-                <span>选择模型</span>
-                <select class="settings-select" value={ollamaModel} onChange={(e) => { setOllamaModel((e.target as HTMLSelectElement).value); setOllamaError(""); }}>
-                  <option value="">— 不用 Ollama —</option>
-                  {ollamaModels.map(m => <option key={m} value={m}>{m}</option>)}
-                </select>
-              </label>
+            {provider === "deepseek" && (
+              <>
+                <label class="settings-field">
+                  <span>DeepSeek API Key</span>
+                  <input type="password" placeholder="sk-..." value={deepseekKey} onInput={(e) => setDeepseekKey((e.target as HTMLInputElement).value)} />
+                </label>
+                <label class="settings-field">
+                  <span>QWEN Vision Key <em style="color:var(--text-muted)">(optional)</em></span>
+                  <input type="password" placeholder="sk-..." value={qwenKey} onInput={(e) => setQwenKey((e.target as HTMLInputElement).value)} />
+                </label>
+                <button class="settings-save" onClick={saveDeepSeek} disabled={keyStatus === "saving" || !deepseekKey}>
+                  {keyStatus === "saving" ? "Saving..." : keyStatus === "saved" ? "✓ Saved" : "使用 DeepSeek API"}
+                </button>
+              </>
             )}
-            {!ollamaModels.length && ollamaModel && (
-              <label class="settings-field">
-                <span>模型名称</span>
-                <input type="text" placeholder="llama3.2" value={ollamaModel} onInput={(e) => { setOllamaModel((e.target as HTMLInputElement).value); setOllamaError(""); }} />
-              </label>
+
+            {provider === "ollama" && (
+              <>
+                <button class="settings-save" onClick={detectOllama} disabled={ollamaDetecting} style="margin-bottom:12px;background:var(--bg-card);color:var(--accent);border:1px solid var(--accent)">
+                  {ollamaDetecting ? "检测中..." : "🔍 检测本地模型"}
+                </button>
+                {ollamaStatus && <p class="settings-note" style="color:var(--accent);margin-bottom:8px">{ollamaStatus}</p>}
+                {ollamaModels.length > 0 && (
+                  <label class="settings-field">
+                    <span>选择模型</span>
+                    <select class="settings-select" value={ollamaModel} onChange={(e) => setOllamaModel((e.target as HTMLSelectElement).value)}>
+                      {ollamaModels.map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                  </label>
+                )}
+                {!ollamaModels.length && (
+                  <label class="settings-field">
+                    <span>模型名称</span>
+                    <input type="text" placeholder="llama3.2" value={ollamaModel} onInput={(e) => setOllamaModel((e.target as HTMLInputElement).value)} />
+                  </label>
+                )}
+                <button class="settings-save" onClick={saveOllama} disabled={!ollamaModel}>
+                  使用本地 {ollamaModel || "模型"}
+                </button>
+                <p class="settings-note">
+                  安装：<code>brew install ollama && ollama serve</code> | 下载模型：<code>ollama pull llama3.2</code>
+                </p>
+              </>
             )}
-            {ollamaModel && (
-              <button class="settings-save" onClick={saveOllama}>使用 {ollamaModel}</button>
-            )}
-            <p class="settings-note">
-              Ollama 下载：<code>brew install ollama && ollama serve</code>
-              <br />下载模型：<code>ollama pull llama3.2</code>
-            </p>
           </div>
         )}
 
@@ -158,7 +168,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
                 ))}
               </div>
             )}
-            <p class="settings-note">修改后需关闭并重启当前对话（新 Agent 会话生效）</p>
+            <p class="settings-note">修改后需重启当前对话（新 Agent 会话生效）</p>
           </div>
         )}
       </div>
