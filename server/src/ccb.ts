@@ -35,6 +35,12 @@ function buildEnv(): Record<string, string> {
   }
   env.TERM = env.TERM || "xterm-256color";
   env.NO_COLOR = "1";
+  // Ensure common binary paths are in PATH (fixes node/python not found)
+  const extraPaths = ["/opt/homebrew/bin", "/usr/local/bin"].filter(p => existsSync(p));
+  if (extraPaths.length > 0) {
+    const sep = isWin ? ";" : ":";
+    env.PATH = extraPaths.join(sep) + sep + (env.PATH || process.env.PATH || "");
+  }
   // Ollama mode: use local, no API key needed
   if (env.OLLAMA_MODEL) {
     env.CLAUDE_CODE_USE_OPENAI = "true";
