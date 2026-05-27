@@ -509,6 +509,29 @@ export function sendMessage(convId: string, text: string) {
   const conv = conversations.value.find((c) => c.id === convId);
   if (!conv) return;
 
+  // Auto-start agent if agent mode is ON but process is OFF
+  if (conv.agentMode && conv.agentStatus === "off") {
+    startAgent(convId, parseInt(location.port) || 3456);
+    // Queue the message to be sent after agent starts
+    updateConv(convId, { status: "Agent warming up (~25s)..." });
+    setTimeout(() => {
+      const c = conversations.value.find((c1) => c1.id === convId);
+      if (c?.ws && c.ws.readyState === WebSocket.OPEN) {
+        c.ws.send(JSON.stringify({ type: "user_message", content: text }));
+      }
+    }, 3000);
+    // Still add user message to chat
+    const msgs = [
+      ...conv.messages,
+      { id: cid(), role: "user" as const, content: text, status: "done" as const },
+    ];
+    conversations.value = conversations.value.map((c) =>
+      c.id === convId ? { ...c, messages: msgs, pendingPermission: null } : c
+    );
+    saveSessions();
+    return;
+  }
+
   // Always add user message to chat first (even if WS not ready)
   const newMessages = [
     ...conv.messages,
