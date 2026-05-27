@@ -109,19 +109,6 @@ body {
   margin-top: 10px;
   text-align: center;
 }
-.settings-select {
-  background: var(--bg-primary);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text-primary);
-  padding: 8px 12px;
-  font-size: 13px;
-  font-family: var(--font-mono);
-  outline: none;
-  width: 100%;
-}
-.settings-select:focus { border-color: var(--accent); }
-
 .settings-note code {
   background: var(--bg-primary);
   padding: 1px 5px;

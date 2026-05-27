@@ -24,7 +24,6 @@ const CCB_ENV_KEYS = [
   "OPENAI_BASE_URL", "ANTHROPIC_BASE_URL",
   "ANTHROPIC_MODEL", "ANTHROPIC_SMALL_FAST_MODEL",
   "CLAUDE_CODE_USE_OPENAI", "QWEN_API_KEY", "DASHSCOPE_API_KEY",
-  "OLLAMA_URL", "OLLAMA_MODEL",
 ];
 
 function buildEnv(): Record<string, string> {
@@ -41,19 +40,10 @@ function buildEnv(): Record<string, string> {
     const sep = isWin ? ";" : ":";
     env.PATH = extraPaths.join(sep) + sep + (env.PATH || process.env.PATH || "");
   }
-  // Ollama mode: use local, no API key needed
-  if (env.OLLAMA_MODEL) {
-    env.CLAUDE_CODE_USE_OPENAI = "true";
-    env.OPENAI_BASE_URL = env.OLLAMA_URL || "http://localhost:11434/v1";
-    env.ANTHROPIC_BASE_URL = env.OLLAMA_URL || "http://localhost:11434/v1";
-    env.ANTHROPIC_MODEL = env.OLLAMA_MODEL;
-  } else {
-    // Cloud mode (DeepSeek default)
-    env.CLAUDE_CODE_USE_OPENAI = "true";
-    env.OPENAI_BASE_URL = env.OPENAI_BASE_URL || "https://api.deepseek.com";
-    env.ANTHROPIC_BASE_URL = env.ANTHROPIC_BASE_URL || "https://api.deepseek.com/anthropic";
-    env.ANTHROPIC_MODEL = env.ANTHROPIC_MODEL || "deepseek-v4-pro";
-  }
+  env.CLAUDE_CODE_USE_OPENAI = "true";
+  env.OPENAI_BASE_URL = env.OPENAI_BASE_URL || "https://api.deepseek.com";
+  env.ANTHROPIC_BASE_URL = env.ANTHROPIC_BASE_URL || "https://api.deepseek.com/anthropic";
+  env.ANTHROPIC_MODEL = env.ANTHROPIC_MODEL || "deepseek-v4-pro";
   env.ANTHROPIC_SMALL_FAST_MODEL = env.ANTHROPIC_SMALL_FAST_MODEL || "deepseek-v4-flash";
   // Windows: ensure SHELL + PATH include git bash (bundled or system)
   if (isWin) {
