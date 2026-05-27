@@ -301,7 +301,7 @@ export function App() {
                 </button>
               )}
               <span class="wechat-contact" title="使用疑问请联系微信">
-                💬 疑问解答：YA_24601
+                💬 疑问解答微信号：YA_24601
               </span>
               <button
                 class="upgrade-btn"
