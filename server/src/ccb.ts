@@ -36,24 +36,32 @@ function buildEnv(): Record<string, string> {
   env.ANTHROPIC_SMALL_FAST_MODEL = env.ANTHROPIC_SMALL_FAST_MODEL || "deepseek-v4-flash";
   // Windows: ensure SHELL + PATH include git bash (bundled or system)
   if (isWin) {
-    for (const gitDir of [
-      join(MODULE_DIR, "../../binaries/git/bin"),
-      join(MODULE_DIR, "../../binaries/git/cmd"),
+    // Bundled MinGit: check usr/bin/bash.exe, cmd/git.exe
+    const bundledGit = join(MODULE_DIR, "../../binaries/git");
+    const candidateDirs = [
+      join(bundledGit, "usr\\bin"),
+      join(bundledGit, "cmd"),
+      join(bundledGit, "bin"),
       "C:\\Program Files\\Git\\bin",
+      "C:\\Program Files\\Git\\usr\\bin",
       "C:\\Program Files (x86)\\Git\\bin",
-    ]) {
-      if (existsSync(gitDir + "\\bash.exe") || existsSync(gitDir + "\\git.exe")) {
-        const bashExe = existsSync(gitDir + "\\bash.exe") ? gitDir + "\\bash.exe" : "";
-        if (!env.SHELL && bashExe) env.SHELL = bashExe;
-        // Prepend git dirs to PATH (bundled git has usr/bin, cmd, bin)
-        const parent = gitDir.replace(/\\[^\\]+$/, ""); // go up one level
-        const parts = [gitDir];
-        if (existsSync(parent + "\\usr\\bin")) parts.push(parent + "\\usr\\bin");
-        if (existsSync(parent + "\\mingw64\\bin")) parts.push(parent + "\\mingw64\\bin");
-        if (existsSync(parent + "\\cmd")) parts.push(parent + "\\cmd");
-        env.PATH = parts.join(";") + ";" + (env.PATH || process.env.PATH || "");
-        break;
+    ];
+    for (const dir of candidateDirs) {
+      if (!existsSync(dir)) continue;
+      // Look for bash.exe or git.exe in this dir
+      const hasBash = existsSync(dir + "\\bash.exe");
+      const hasGit = existsSync(dir + "\\git.exe");
+      if (!hasBash && !hasGit) continue;
+      if (!env.SHELL && hasBash) env.SHELL = dir + "\\bash.exe";
+      // Collect all relevant subdirs of this git installation
+      const root = dir.replace(/\\usr\\bin$|\\bin$|\\cmd$/, "");
+      const parts: string[] = [];
+      for (const sub of ["usr\\bin", "cmd", "bin", "mingw64\\bin", "mingw32\\bin"]) {
+        if (existsSync(root + "\\" + sub)) parts.push(root + "\\" + sub);
       }
+      if (parts.length === 0) parts.push(dir);
+      env.PATH = parts.join(";") + ";" + (env.PATH || process.env.PATH || "");
+      break;
     }
   }
   return env;
