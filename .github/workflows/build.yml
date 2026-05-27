@@ -15,13 +15,16 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with: { targets: "aarch64-apple-darwin" }
+      - name: Install dependencies
+        run: bun install && cd web && bun install
       - name: Build frontend
-        run: cd web && bun install && bun run build
+        run: cd web && bun run build
       - name: Download Bun (macOS arm64)
         run: |
           mkdir -p src-tauri/binaries/bun-darwin-aarch64
           curl -fsSL https://github.com/oven-sh/bun/releases/latest/download/bun-darwin-aarch64.zip -o /tmp/b.zip
-          unzip -o /tmp/b.zip -d src-tauri/binaries/bun-darwin-aarch64/
+          unzip -o /tmp/b.zip -d /tmp/bun-mac/
+          mv /tmp/bun-mac/bun-darwin-aarch64/bun src-tauri/binaries/bun-darwin-aarch64/bun
           chmod +x src-tauri/binaries/bun-darwin-aarch64/bun
       - uses: tauri-apps/tauri-action@v0
         env:
@@ -41,15 +44,19 @@ jobs:
         with: { bun-version: latest }
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+      - name: Install dependencies
+        shell: bash
+        run: bun install && cd web && bun install
       - name: Build frontend
-        run: cd web && bun install && bun run build
+        run: cd web && bun run build
         shell: bash
       - name: Download Bun (Windows x64)
         shell: bash
         run: |
           mkdir -p src-tauri/binaries/bun-windows-x64
           curl -fsSL https://github.com/oven-sh/bun/releases/latest/download/bun-windows-x64.zip -o /tmp/b.zip
-          unzip -o /tmp/b.zip -d src-tauri/binaries/bun-windows-x64/
+          unzip -o /tmp/b.zip -d /tmp/bun-win/
+          mv /tmp/bun-win/bun-windows-x64/bun.exe src-tauri/binaries/bun-windows-x64/bun.exe
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
