@@ -300,13 +300,15 @@ export function App() {
                   {updateInfo.downloading ? "⟳ Downloading..." : t("misc.update", { version: updateInfo.latest })}
                 </button>
               )}
-              <button
+              <a
                 class="upgrade-btn"
-                onClick={() => handleExternalUrl("https://shieldyh.com")}
+                href="https://shieldyh.com"
+                target="_blank"
+                rel="noopener"
                 title="Get Pro: 200+ skills, auto-start, 3 devices"
               >
                 {t("misc.upgrade")}
-              </button>
+              </a>
               {active.agentStatus === "warming" && (
                 <span class="status-bar-agent">⟳ {t("agent.warmingShort")} {warmingSec}s（通常 15-30s）</span>
               )}
