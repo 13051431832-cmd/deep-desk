@@ -305,13 +305,7 @@ export function App() {
               </span>
               <button
                 class="upgrade-btn"
-                onClick={async () => {
-                  try {
-                    await openUrl("https://shieldyh.com");
-                  } catch {
-                    window.open("https://shieldyh.com", "_blank");
-                  }
-                }}
+                onClick={() => window.open("https://shieldyh.com", "_blank")}
                 title="Get Pro: 200+ skills, auto-start, 3 devices"
               >
                 {t("misc.upgrade")}
