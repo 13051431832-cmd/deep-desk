@@ -1,9 +1,11 @@
 import { homedir } from "os";
 import { join } from "path";
+import { fileURLToPath } from "url";
 import type { Subprocess } from "bun";
 import { existsSync, mkdirSync } from "fs";
 
 const home = homedir();
+const MODULE_DIR = fileURLToPath(new URL(".", import.meta.url));
 
 const CCB_SCRIPT = join(home, "node_modules", "claude-code-best", "dist", "cli.js");
 const BUN_BIN = join(home, ".bun", "bin", "bun");
@@ -32,15 +34,24 @@ function buildEnv(): Record<string, string> {
   env.ANTHROPIC_BASE_URL = env.ANTHROPIC_BASE_URL || "https://api.deepseek.com/anthropic";
   env.ANTHROPIC_MODEL = env.ANTHROPIC_MODEL || "deepseek-v4-pro";
   env.ANTHROPIC_SMALL_FAST_MODEL = env.ANTHROPIC_SMALL_FAST_MODEL || "deepseek-v4-flash";
-  // Windows: ensure SHELL + PATH include git bash if available
+  // Windows: ensure SHELL + PATH include git bash (bundled or system)
   if (isWin) {
-    for (const gitDir of ["C:\\Program Files\\Git\\bin", "C:\\Program Files (x86)\\Git\\bin"]) {
-      if (existsSync(gitDir + "\\bash.exe")) {
-        if (!env.SHELL) env.SHELL = gitDir + "\\bash.exe";
-        // Prepend git bin and usr/bin (for sh, grep, etc.) to PATH
-        const usrBin = gitDir + "\\..\\usr\\bin";
-        const extra = gitDir + ";" + usrBin;
-        env.PATH = extra + ";" + (env.PATH || process.env.PATH || "");
+    for (const gitDir of [
+      join(MODULE_DIR, "../../binaries/git/bin"),
+      join(MODULE_DIR, "../../binaries/git/cmd"),
+      "C:\\Program Files\\Git\\bin",
+      "C:\\Program Files (x86)\\Git\\bin",
+    ]) {
+      if (existsSync(gitDir + "\\bash.exe") || existsSync(gitDir + "\\git.exe")) {
+        const bashExe = existsSync(gitDir + "\\bash.exe") ? gitDir + "\\bash.exe" : "";
+        if (!env.SHELL && bashExe) env.SHELL = bashExe;
+        // Prepend git dirs to PATH (bundled git has usr/bin, cmd, bin)
+        const parent = gitDir.replace(/\\[^\\]+$/, ""); // go up one level
+        const parts = [gitDir];
+        if (existsSync(parent + "\\usr\\bin")) parts.push(parent + "\\usr\\bin");
+        if (existsSync(parent + "\\mingw64\\bin")) parts.push(parent + "\\mingw64\\bin");
+        if (existsSync(parent + "\\cmd")) parts.push(parent + "\\cmd");
+        env.PATH = parts.join(";") + ";" + (env.PATH || process.env.PATH || "");
         break;
       }
     }
