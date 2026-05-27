@@ -303,22 +303,9 @@ export function App() {
               <span class="wechat-contact" title="使用疑问请联系微信">
                 💬 疑问解答微信号：YA_24601
               </span>
-              <button
-                class="upgrade-btn"
-                ref={(el) => {
-                  if (el) el.onclick = () => {
-                    const tauri = (window as any).__TAURI_INTERNALS__;
-                    if (tauri) {
-                      tauri.invoke("open_external", { url: "https://shieldyh.com" });
-                    } else {
-                      window.open("https://shieldyh.com", "_blank");
-                    }
-                  };
-                }}
-                title="Get Pro: 200+ skills, auto-start, 3 devices"
-              >
-                {t("misc.upgrade")}
-              </button>
+              <div dangerouslySetInnerHTML={{
+                __html: '<a class="upgrade-btn" href="https://shieldyh.com" target="_blank" style="text-decoration:none;display:inline-block">' + t("misc.upgrade") + '</a>'
+              }} />
               {active.agentStatus === "warming" && (
                 <span class="status-bar-agent">⟳ {t("agent.warmingShort")} {warmingSec}s（通常 15-30s）</span>
               )}
