@@ -203,10 +203,13 @@ Bun.serve({
             const eq = line.indexOf("=");
             if (eq > 0) envMap[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
           }
-          if (body.deepseekKey) envMap.DEEPSEEK_API_KEY = body.deepseekKey;
+          if (body.deepseekKey) { envMap.DEEPSEEK_API_KEY = body.deepseekKey; envMap.OPENAI_API_KEY = body.deepseekKey; }
           if (body.qwenKey) envMap.QWEN_API_KEY = body.qwenKey;
           const newContent = Object.entries(envMap).map(([k, v]) => `${k}=${v}`).join("\n") + "\n";
           await Bun.write(DEEPDESK_ENV, newContent);
+          // Also set in current process so GET reflects immediately
+          if (body.deepseekKey) { process.env.DEEPSEEK_API_KEY = body.deepseekKey; process.env.OPENAI_API_KEY = body.deepseekKey; }
+          if (body.qwenKey) process.env.QWEN_API_KEY = body.qwenKey;
           return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
         } catch (err: any) {
           return new Response(JSON.stringify({ error: err.message }), { status: 500 });
