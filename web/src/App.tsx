@@ -301,6 +301,7 @@ export function App() {
                   {updateInfo.downloading ? "⟳ Downloading..." : t("misc.update", { version: updateInfo.latest })}
                 </button>
               )}
+              <span class="pro-badge" title="Pro 版：MCP x8 + Skills x200+">⚡ Pro</span>
               <span class="wechat-contact" title="使用疑问请联系微信">
                 💬 疑问解答微信号：YA_24601
               </span>

@@ -277,27 +277,57 @@ export function spawnSession(callbacks: {
 
   // ── Start ccb process + wire up readers ──────────────────────────────
 
-  // Auto-install claude-code-best if not present
+  // Auto-install claude-code-best + superpowers if not present
   function ensureCCB(): boolean {
-    if (existsSync(CCB_SCRIPT)) return true;
-    callbacks.onError("Installing AI engine (one-time setup, ~30s)...");
-    try {
-      // Install locally in home dir so CCB_SCRIPT path resolves
-      mkdirSync(home, { recursive: true });
-      const result = Bun.spawnSync([BUN_BIN, "install", "claude-code-best"], {
-        cwd: home, env: process.env as Record<string, string>,
-        stdout: "pipe", stderr: "pipe",
-      });
-      if (result.exitCode === 0 && existsSync(CCB_SCRIPT)) {
+    if (!existsSync(CCB_SCRIPT)) {
+      callbacks.onError("Installing AI engine (one-time setup, ~30s)...");
+      try {
+        mkdirSync(home, { recursive: true });
+        const result = Bun.spawnSync([BUN_BIN, "install", "claude-code-best"], {
+          cwd: home, env: process.env as Record<string, string>,
+          stdout: "pipe", stderr: "pipe",
+        });
+        if (result.exitCode !== 0 || !existsSync(CCB_SCRIPT)) {
+          const stderr = new TextDecoder().decode(result.stderr).slice(0, 200);
+          callbacks.onError(`Engine install failed: ${stderr}`);
+          return false;
+        }
         callbacks.onError("Engine installed. Starting...");
-        return true;
+      } catch (e: any) {
+        callbacks.onError(`Engine install error: ${e.message}`);
+        return false;
       }
-      const stderr = new TextDecoder().decode(result.stderr).slice(0, 200);
-      callbacks.onError(`Engine install failed (exit ${result.exitCode}): ${stderr}`);
-    } catch (e: any) {
-      callbacks.onError(`Engine install error: ${e.message}`);
     }
-    return false;
+    // Install superpowers plugin for skills (Pro feature)
+    const skillsDir = join(home, ".claude", "skills");
+    if (!existsSync(skillsDir) || !existsSync(join(skillsDir, "brainstorming"))) {
+      callbacks.onError("Installing Pro skills (~200 skills, one-time)...");
+      try {
+        mkdirSync(join(home, ".claude", "plugins"), { recursive: true });
+        const pluginDir = join(home, ".claude", "plugins", "cache", "claude-plugins-official", "superpowers");
+        if (!existsSync(pluginDir)) {
+          const clone = Bun.spawnSync(["git", "clone", "--depth", "1", "https://github.com/anthropics/claude-plugins-official.git", pluginDir], {
+            cwd: home, env: process.env as Record<string, string>,
+            stdout: "pipe", stderr: "pipe",
+          });
+          if (clone.exitCode !== 0) {
+            callbacks.onError("Skills install skipped (network issue). Agent will work without skills.");
+            return true; // Continue without skills
+          }
+        }
+        // Copy skills to ~/.claude/skills/
+        mkdirSync(skillsDir, { recursive: true });
+        const installScript = join(pluginDir, "install.sh");
+        if (existsSync(installScript)) {
+          Bun.spawnSync(["bash", installScript], {
+            cwd: pluginDir, env: { ...process.env, HOME: home } as Record<string, string>,
+            stdout: "pipe", stderr: "pipe",
+          });
+        }
+        callbacks.onError("Pro skills ready. Starting agent...");
+      } catch { callbacks.onError("Skills install skipped. Starting agent..."); }
+    }
+    return true;
   }
 
   function startProc() {
