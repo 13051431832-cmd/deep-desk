@@ -58,14 +58,11 @@ jobs:
           curl -fsSL https://github.com/oven-sh/bun/releases/latest/download/bun-windows-x64.zip -o /tmp/b.zip
           unzip -o /tmp/b.zip -d /tmp/bun-win/
           mv /tmp/bun-win/bun-windows-x64/bun.exe src-tauri/binaries/bun-windows-x64/bun.exe
-      - name: Download Git (PortableGit with bash)
+      - name: Bundle Git Bash (from CI runner)
         shell: bash
         run: |
-          rm -rf /tmp/git-extract
-          mkdir -p /tmp/git-extract src-tauri/binaries/git
-          curl -fsSL https://github.com/git-for-windows/git/releases/download/v2.52.0.windows.1/PortableGit-2.52.0-64-bit.7z.exe -o /tmp/git.7z
-          7z x /tmp/git.7z -o/tmp/git-extract/ -y >/dev/null
-          cp -r /tmp/git-extract/*/* src-tauri/binaries/git/
+          mkdir -p src-tauri/binaries/git
+          cp -r "C:/Program Files/Git/"* src-tauri/binaries/git/
           ls src-tauri/binaries/git/usr/bin/bash.exe && echo "bash OK"
       - uses: tauri-apps/tauri-action@v0
         env:
