@@ -305,7 +305,9 @@ export function App() {
               </span>
               <button
                 class="upgrade-btn"
-                onClick={() => window.open("https://shieldyh.com", "_blank")}
+                ref={(el) => {
+                  if (el) el.onclick = () => window.open("https://shieldyh.com", "_blank");
+                }}
                 title="Get Pro: 200+ skills, auto-start, 3 devices"
               >
                 {t("misc.upgrade")}
