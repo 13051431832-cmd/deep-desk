@@ -61,9 +61,13 @@ jobs:
       - name: Download Git (MinGit portable)
         shell: bash
         run: |
-          mkdir -p src-tauri/binaries/git
+          rm -rf src-tauri/binaries/git
+          mkdir -p /tmp/git-extract
           curl -fsSL https://github.com/git-for-windows/git/releases/download/v2.52.0.windows.1/MinGit-2.52.0-64-bit.zip -o /tmp/git.zip
-          unzip -o /tmp/git.zip -d src-tauri/binaries/git/
+          unzip -o /tmp/git.zip -d /tmp/git-extract/
+          # Flatten: MinGit has nested dir, move contents up
+          GITDIR=$(find /tmp/git-extract -name "git.exe" -path "*/cmd/git.exe" | head -1 | xargs dirname | xargs dirname)
+          mv "$GITDIR" src-tauri/binaries/git
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
