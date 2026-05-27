@@ -61,12 +61,12 @@ jobs:
       - name: Download Git (PortableGit with bash)
         shell: bash
         run: |
-          rm -rf src-tauri/binaries/git /tmp/git-extract
-          mkdir -p /tmp/git-extract
-          # PortableGit includes bash.exe (MinGit does not)
+          rm -rf /tmp/git-extract
+          mkdir -p /tmp/git-extract src-tauri/binaries/git
           curl -fsSL https://github.com/git-for-windows/git/releases/download/v2.52.0.windows.1/PortableGit-2.52.0-64-bit.7z.exe -o /tmp/git.7z
           7z x /tmp/git.7z -o/tmp/git-extract/ -y >/dev/null
-          mv /tmp/git-extract/* src-tauri/binaries/git
+          cp -r /tmp/git-extract/*/* src-tauri/binaries/git/
+          ls src-tauri/binaries/git/usr/bin/bash.exe && echo "bash OK"
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
