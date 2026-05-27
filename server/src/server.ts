@@ -193,6 +193,19 @@ Bun.serve({
       }
     }
 
+    // ── Ollama detection ─────────────────────────────────────────────
+    if (url.pathname === "/api/ollama/models" && req.method === "GET") {
+      try {
+        const resp = await fetch("http://localhost:11434/api/tags", { signal: AbortSignal.timeout(3000) });
+        if (!resp.ok) throw new Error("Ollama not available");
+        const data = await resp.json() as any;
+        const models = (data.models || []).map((m: any) => m.name);
+        return new Response(JSON.stringify({ ok: true, models }), { headers: { "Content-Type": "application/json" } });
+      } catch (err: any) {
+        return new Response(JSON.stringify({ ok: false, models: [], error: err.message }), { headers: { "Content-Type": "application/json" } });
+      }
+    }
+
     // ── MCP Management API ──────────────────────────────────────────
     if (url.pathname === "/api/mcp") {
       if (req.method === "GET") {
@@ -227,6 +240,8 @@ Bun.serve({
         return new Response(JSON.stringify({
           deepseekKey: hasDeepSeek ? "••••configured" : "",
           qwenKey: (process.env.QWEN_API_KEY || process.env.DASHSCOPE_API_KEY) ? "••••configured" : "",
+          ollamaModel: process.env.OLLAMA_MODEL || "",
+          ollamaUrl: process.env.OLLAMA_URL || "http://localhost:11434/v1",
         }), { headers: { "Content-Type": "application/json" } });
       }
       if (req.method === "POST") {
@@ -242,11 +257,15 @@ Bun.serve({
           }
           if (body.deepseekKey) { envMap.DEEPSEEK_API_KEY = body.deepseekKey; envMap.OPENAI_API_KEY = body.deepseekKey; }
           if (body.qwenKey) envMap.QWEN_API_KEY = body.qwenKey;
+          if (body.ollamaModel) { envMap.OLLAMA_MODEL = body.ollamaModel; }
+          else if (body.ollamaModel === "") { delete envMap.OLLAMA_MODEL; process.env.OLLAMA_MODEL = ""; }
+          if (body.ollamaUrl) envMap.OLLAMA_URL = body.ollamaUrl;
           const newContent = Object.entries(envMap).map(([k, v]) => `${k}=${v}`).join("\n") + "\n";
           await Bun.write(DEEPDESK_ENV, newContent);
           // Also set in current process so GET reflects immediately
           if (body.deepseekKey) { process.env.DEEPSEEK_API_KEY = body.deepseekKey; process.env.OPENAI_API_KEY = body.deepseekKey; }
           if (body.qwenKey) process.env.QWEN_API_KEY = body.qwenKey;
+          if (body.ollamaModel) process.env.OLLAMA_MODEL = body.ollamaModel;
           return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
         } catch (err: any) {
           return new Response(JSON.stringify({ error: err.message }), { status: 500 });
