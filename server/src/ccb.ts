@@ -282,7 +282,9 @@ export function spawnSession(callbacks: {
     if (existsSync(CCB_SCRIPT)) return true;
     callbacks.onError("Installing AI engine (one-time setup, ~30s)...");
     try {
-      const result = Bun.spawnSync([BUN_BIN, "install", "-g", "claude-code-best"], {
+      // Install locally in home dir so CCB_SCRIPT path resolves
+      mkdirSync(home, { recursive: true });
+      const result = Bun.spawnSync([BUN_BIN, "install", "claude-code-best"], {
         cwd: home, env: process.env as Record<string, string>,
         stdout: "pipe", stderr: "pipe",
       });
@@ -290,7 +292,8 @@ export function spawnSession(callbacks: {
         callbacks.onError("Engine installed. Starting...");
         return true;
       }
-      callbacks.onError(`Engine install failed (exit ${result.exitCode}). Check network.`);
+      const stderr = new TextDecoder().decode(result.stderr).slice(0, 200);
+      callbacks.onError(`Engine install failed (exit ${result.exitCode}): ${stderr}`);
     } catch (e: any) {
       callbacks.onError(`Engine install error: ${e.message}`);
     }
