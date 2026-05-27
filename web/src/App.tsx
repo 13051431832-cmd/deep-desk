@@ -300,18 +300,22 @@ export function App() {
                   {updateInfo.downloading ? "⟳ Downloading..." : t("misc.update", { version: updateInfo.latest })}
                 </button>
               )}
-              <span class="wechat-contact" title="疑问解答 · WeChat">
-                💬 YA_24601
+              <span class="wechat-contact" title="使用疑问请联系微信">
+                💬 疑问解答：YA_24601
               </span>
-              <a
+              <button
                 class="upgrade-btn"
-                href="https://shieldyh.com"
-                target="_blank"
-                rel="noopener"
+                onClick={async () => {
+                  try {
+                    await openUrl("https://shieldyh.com");
+                  } catch {
+                    window.open("https://shieldyh.com", "_blank");
+                  }
+                }}
                 title="Get Pro: 200+ skills, auto-start, 3 devices"
               >
                 {t("misc.upgrade")}
-              </a>
+              </button>
               {active.agentStatus === "warming" && (
                 <span class="status-bar-agent">⟳ {t("agent.warmingShort")} {warmingSec}s（通常 15-30s）</span>
               )}
