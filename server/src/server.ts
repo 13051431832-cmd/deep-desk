@@ -275,6 +275,9 @@ Bun.serve({
           // Also set in current process
           if (body.provider === "ollama" && body.ollamaModel) process.env.OLLAMA_MODEL = body.ollamaModel;
           if (body.provider === "deepseek") process.env.OLLAMA_MODEL = "";
+          // Kill all active CCB sessions so new ones pick up the provider change
+          for (const [cid, cs] of convSessions) { cs.session.kill(); }
+          convSessions.clear();
           if (body.deepseekKey && !body.deepseekKey.startsWith("••••")) {
             process.env.DEEPSEEK_API_KEY = body.deepseekKey; process.env.OPENAI_API_KEY = body.deepseekKey;
           }
