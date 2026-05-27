@@ -144,7 +144,7 @@ const translations: Record<string, Record<Lang, string>> = {
   // Misc
   "misc.emptyHint":        { zh: "点击上方卡片快速开始，或在输入框输入你的问题", en: "Click a card above to start, or type your question below" },
   "misc.emptyChat":        { zh: "Deep Desk", en: "Deep Desk" },
-  "misc.emptyDesc":        { zh: "AI 编程助手，基于 DeepSeek", en: "AI coding assistant powered by DeepSeek" },
+  "misc.emptyDesc":        { zh: "deepseek驱动的ClaudeY助手", en: "ClaudeY assistant powered by DeepSeek" },
   "misc.upgrade":          { zh: "升级到 Pro", en: "Upgrade to Pro" },
   "misc.update":           { zh: "更新 v{version}", en: "Update v{version}" },
   "misc.reconnecting":     { zh: "⟳ 重连中...", en: "⟳ Reconnecting..." },
