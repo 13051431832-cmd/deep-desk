@@ -477,13 +477,20 @@ function handleConvEvent(convId: string, event: any) {
     case "agent_status":
       updateConv(convId, {
         agentStatus: event.status,
-        status: event.status === "warming" ? "Agent warming up (~25s)..." : conv.status,
+        status: event.status === "warming" ? "Agent warming up (~25s)..." : event.status === "off" ? t("status.ready") : conv.status,
       });
+      // Clear warming timeout if agent transitions away from warming
+      if (event.status !== "warming") {
+        const c = conversations.value.find((c1) => c1.id === convId);
+        if (c && (c as any).__warmTimeout) { clearTimeout((c as any).__warmTimeout); delete (c as any).__warmTimeout; }
+      }
       break;
 
     case "error":
       const errText = friendlyError(event.message || "");
-      updateConv(convId, { status: errText });
+      updateConv(convId, { status: errText, agentStatus: "off" });
+      const cErr = conversations.value.find((c1) => c1.id === convId);
+      if (cErr && (cErr as any).__warmTimeout) { clearTimeout((cErr as any).__warmTimeout); delete (cErr as any).__warmTimeout; }
       const activeMsg = getActiveAssistantMsg(conv);
       if (activeMsg) {
         activeMsg.content = errText;
@@ -606,6 +613,8 @@ export function startAgent(convId: string, port: number) {
   const conv = conversations.value.find((c) => c.id === convId);
   if (!conv) return;
 
+  setWarmTimeout(convId);
+
   // Auto-connect if disconnected
   if (!conv.ws || conv.ws.readyState > 1) {
     connectConversation(convId, port);
@@ -635,10 +644,32 @@ export function startAgent(convId: string, port: number) {
   });
 }
 
+// Warming timeout helper — auto-recover if agent never starts
+function setWarmTimeout(convId: string) {
+  const WARM_TIMEOUT = 60000; // 60s
+  const existing = (conversations.value.find((c) => c.id === convId) as any)?.__warmTimeout;
+  if (existing) clearTimeout(existing);
+  const timer = setTimeout(() => {
+    const c = conversations.value.find((c1) => c1.id === convId);
+    if (c && c.agentStatus === "warming") {
+      updateConv(convId, {
+        agentStatus: "off",
+        status: "Agent failed to start. Check API key and network.",
+      });
+    }
+  }, WARM_TIMEOUT);
+  // Store timer on conversation
+  conversations.value = conversations.value.map((c) =>
+    c.id === convId ? Object.assign(c, { __warmTimeout: timer }) : c
+  );
+}
+
 // Toggle agent mode for a conversation
 export function toggleAgentMode(convId: string, enabled: boolean, port?: number) {
   const conv = conversations.value.find((c) => c.id === convId);
   if (!conv) return;
+
+  if (enabled) setWarmTimeout(convId);
 
   // Auto-connect WebSocket if not connected (e.g. restored tab)
   if (!conv.ws || conv.ws.readyState > 1) {
