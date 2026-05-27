@@ -300,6 +300,9 @@ export function App() {
                   {updateInfo.downloading ? "⟳ Downloading..." : t("misc.update", { version: updateInfo.latest })}
                 </button>
               )}
+              <span class="wechat-contact" title="疑问解答 · WeChat">
+                💬 YA_24601
+              </span>
               <a
                 class="upgrade-btn"
                 href="https://shieldyh.com"

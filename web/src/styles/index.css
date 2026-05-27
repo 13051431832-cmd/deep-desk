@@ -919,6 +919,17 @@ body {
   background: rgba(240, 136, 62, 0.15);
 }
 
+/* === WeChat Contact === */
+.wechat-contact {
+  color: var(--text-muted);
+  font-size: 11px;
+  padding: 3px 10px;
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 4px;
+  white-space: nowrap;
+  user-select: text;
+}
+
 /* === Upgrade Button === */
 .upgrade-btn {
   background: rgba(88, 166, 255, 0.12);
