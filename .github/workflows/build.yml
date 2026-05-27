@@ -1,98 +1,94 @@
-  name: Build Deep Desk                                                                                                 
-                                                                                                                        
-  on:                                                                                                                   
-    push:                                                                                                               
-      tags: ["v*"]                                                                                                      
-    workflow_dispatch:                                                                                                  
-                                                                                                                        
-  jobs:                                                                                                                 
-    macos-aarch64:                                                                                                      
-      runs-on: macos-latest                      
-      steps:                                                                                                            
-        - uses: actions/checkout@v4                                                                                     
-        - uses: oven-sh/setup-bun@v2                                                                                    
-          with: { bun-version: latest }                                                                                 
-        - name: Install Rust                                                                                            
-          uses: dtolnay/rust-toolchain@stable                                                                           
-          with: { targets: "aarch64-apple-darwin" }                                                                     
-        - name: Build frontend                                                                                          
-          run: cd web && bun install && bun run build                                                                   
-        - name: Download Bun (macOS arm64)                                                                              
-          run: |                                                                                                        
-            mkdir -p src-tauri/binaries/bun-darwin-aarch64                                                              
-            curl -fsSL https://github.com/oven-sh/bun/releases/latest/download/bun-darwin-aarch64.zip -o /tmp/b.zip     
-            unzip -o /tmp/b.zip -d src-tauri/binaries/bun-darwin-aarch64/                                               
-            chmod +x src-tauri/binaries/bun-darwin-aarch64/bun                                                          
-        - uses: tauri-apps/tauri-action@v0                                                                              
-          env:                                                                                                          
-            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}                                                                   
-          with:                                                                                                         
-            args: --target aarch64-apple-darwin                                                                         
-        - uses: actions/upload-artifact@v4                                                                              
-          with:                                                                                                         
-            name: Deep-Desk-macOS-arm64                                                                                 
-            path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg                                        
-                                                                                                                        
-    windows-x64:                                                                                                        
-      runs-on: windows-latest                                                                                           
-      steps:                                                                                                            
-        - uses: actions/checkout@v4              
-        - uses: oven-sh/setup-bun@v2                                                                                    
-          with: { bun-version: latest }                                                                                 
-        - name: Install Rust                                                                                            
-          uses: dtolnay/rust-toolchain@stable                                                                           
-        - name: Build frontend                                                                                          
-          run: cd web && bun install && bun run build                                                                   
-          shell: bash                                                                                                   
-        - name: Download Bun (Windows x64)                                                                              
-          shell: bash                                                                                                   
-          run: |                                                                                                        
-            mkdir -p src-tauri/binaries/bun-windows-x64                                                                 
-            curl -fsSL https://github.com/oven-sh/bun/releases/latest/download/bun-windows-x64.zip -o /tmp/b.zip        
-            unzip -o /tmp/b.zip -d src-tauri/binaries/bun-windows-x64/                                                  
-        - uses: tauri-apps/tauri-action@v0                                                                              
-          env:                                                                                                          
-            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}                                                                   
-          with:                                                                                                         
-            args: --target x86_64-pc-windows-msvc
-        - uses: actions/upload-artifact@v4                                                                              
-          with:                                                                                                         
-            name: Deep-Desk-Windows-x64                                                                                 
-            path: |                                                                                                     
-              src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe                                         
-              src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi                                          
-                                                                                                                        
-    release:                                                                                                            
-      needs: [macos-aarch64, windows-x64]                                                                               
-      if: startsWith(github.ref, 'refs/tags/v')                                                                         
-      runs-on: ubuntu-latest                                                                                            
-      steps:                                                                                                            
-        - uses: actions/download-artifact@v4                                                                            
-          with: { path: artifacts }                                                                                     
-        - name: Upload to OSS                                                                                           
-          env:                                                                                                          
-            OSS_ACCESS_KEY: ${{ secrets.OSS_ACCESS_KEY }}                                                               
-            OSS_SECRET_KEY: ${{ secrets.OSS_SECRET_KEY }}                                                               
-          run: |                                                                                                        
-            VERSION="${GITHUB_REF#refs/tags/v}"                                                                         
-            curl -fsSL https://gosspublic.alicdn.com/ossutil/install.sh | bash                                          
-            ~/.local/bin/ossutil config --access-key-id "$OSS_ACCESS_KEY" --access-key-secret "$OSS_SECRET_KEY"         
-  --endpoint oss-cn-hangzhou.aliyuncs.com                                                                               
-            DMG=$(find artifacts/Deep-Desk-macOS-arm64 -name "*.dmg" | head -1)                                         
-            [ -n "$DMG" ] && ~/.local/bin/ossutil cp "$DMG" oss://ccb-store/deepdesk/Deep-Desk-latest.dmg -f            
-            EXE=$(find artifacts/Deep-Desk-Windows-x64 -name "*.exe" | head -1)                                         
-            MSI=$(find artifacts/Deep-Desk-Windows-x64 -name "*.msi" | head -1)                                         
-            WIN_FILE=""                                                                                                 
-            [ -n "$MSI" ] && WIN_FILE="$MSI"                                                                            
-            [ -z "$WIN_FILE" ] && [ -n "$EXE" ] && WIN_FILE="$EXE"                                                      
-            if [ -n "$WIN_FILE" ]; then                                                                                 
-              EXT="${WIN_FILE##*.}"                                                                                     
-              ~/.local/bin/ossutil cp "$WIN_FILE" "oss://ccb-store/deepdesk/Deep-Desk-setup.${EXT}" -f                  
-              echo "{\"version\":\"$VERSION\",\"macUrl\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-
-  Desk-latest.dmg\",\"winUrl\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-setup.${EXT}\"}" >   
-  v.json                                                                                                                
-            else                                                                                                        
-              echo "{\"version\":\"$VERSION\",\"macUrl\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-
-  Desk-latest.dmg\",\"winUrl\":\"\"}" > v.json                                                                          
-            fi                        
-            ~/.local/bin/ossutil cp v.json oss://ccb-store/deepdesk/version.json -f   
+name: Build Deep Desk
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  macos-aarch64:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: latest }
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with: { targets: "aarch64-apple-darwin" }
+      - name: Build frontend
+        run: cd web && bun install && bun run build
+      - name: Download Bun (macOS arm64)
+        run: |
+          mkdir -p src-tauri/binaries/bun-darwin-aarch64
+          curl -fsSL https://github.com/oven-sh/bun/releases/latest/download/bun-darwin-aarch64.zip -o /tmp/b.zip
+          unzip -o /tmp/b.zip -d src-tauri/binaries/bun-darwin-aarch64/
+          chmod +x src-tauri/binaries/bun-darwin-aarch64/bun
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --target aarch64-apple-darwin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Deep-Desk-macOS-arm64
+          path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+
+  windows-x64:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: latest }
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build frontend
+        run: cd web && bun install && bun run build
+        shell: bash
+      - name: Download Bun (Windows x64)
+        shell: bash
+        run: |
+          mkdir -p src-tauri/binaries/bun-windows-x64
+          curl -fsSL https://github.com/oven-sh/bun/releases/latest/download/bun-windows-x64.zip -o /tmp/b.zip
+          unzip -o /tmp/b.zip -d src-tauri/binaries/bun-windows-x64/
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --target x86_64-pc-windows-msvc
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Deep-Desk-Windows-x64
+          path: |
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+
+  release:
+    needs: [macos-aarch64, windows-x64]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts }
+      - name: Upload to OSS
+        env:
+          OSS_ACCESS_KEY: ${{ secrets.OSS_ACCESS_KEY }}
+          OSS_SECRET_KEY: ${{ secrets.OSS_SECRET_KEY }}
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          curl -fsSL https://gosspublic.alicdn.com/ossutil/install.sh | bash
+          ~/.local/bin/ossutil config --access-key-id "$OSS_ACCESS_KEY" --access-key-secret "$OSS_SECRET_KEY" --endpoint oss-cn-hangzhou.aliyuncs.com
+          DMG=$(find artifacts/Deep-Desk-macOS-arm64 -name "*.dmg" | head -1)
+          [ -n "$DMG" ] && ~/.local/bin/ossutil cp "$DMG" oss://ccb-store/deepdesk/Deep-Desk-latest.dmg -f
+          EXE=$(find artifacts/Deep-Desk-Windows-x64 -name "*.exe" | head -1)
+          MSI=$(find artifacts/Deep-Desk-Windows-x64 -name "*.msi" | head -1)
+          WIN_FILE=""
+          [ -n "$MSI" ] && WIN_FILE="$MSI"
+          [ -z "$WIN_FILE" ] && [ -n "$EXE" ] && WIN_FILE="$EXE"
+          if [ -n "$WIN_FILE" ]; then
+            EXT="${WIN_FILE##*.}"
+            ~/.local/bin/ossutil cp "$WIN_FILE" "oss://ccb-store/deepdesk/Deep-Desk-setup.${EXT}" -f
+            echo "{\"version\":\"$VERSION\",\"macUrl\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-latest.dmg\",\"winUrl\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-setup.${EXT}\"}" > v.json
+          else
+            echo "{\"version\":\"$VERSION\",\"macUrl\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-latest.dmg\",\"winUrl\":\"\"}" > v.json
+          fi
+          ~/.local/bin/ossutil cp v.json oss://ccb-store/deepdesk/version.json -f
