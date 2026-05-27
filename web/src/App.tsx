@@ -221,6 +221,7 @@ export function App() {
   };
 
   const [showSettings, setShowSettings] = useState(false);
+  const [showProUrl, setShowProUrl] = useState(false);
 
   const isStreaming = active?.status === "Thinking..." || active?.status === "Streaming..." || active?.agentStatus === "warming";
 
@@ -303,9 +304,15 @@ export function App() {
               <span class="wechat-contact" title="使用疑问请联系微信">
                 💬 疑问解答微信号：YA_24601
               </span>
-              <div dangerouslySetInnerHTML={{
-                __html: '<a class="upgrade-btn" href="https://shieldyh.com" target="_blank" style="text-decoration:none;display:inline-block">' + t("misc.upgrade") + '</a>'
-              }} />
+              <button class="upgrade-btn" onClick={() => setShowProUrl(!showProUrl)}>
+                {t("misc.upgrade")}
+              </button>
+              {showProUrl && (
+                <span class="pro-url-tip">
+                  👉 shieldyh.com
+                  <button class="pro-url-close" onClick={(e) => { e.stopPropagation(); setShowProUrl(false); }}>×</button>
+                </span>
+              )}
               {active.agentStatus === "warming" && (
                 <span class="status-bar-agent">⟳ {t("agent.warmingShort")} {warmingSec}s（通常 15-30s）</span>
               )}

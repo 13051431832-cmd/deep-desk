@@ -930,6 +930,28 @@ body {
   user-select: text;
 }
 
+/* === Upgrade URL Tip === */
+.pro-url-tip {
+  background: rgba(88, 166, 255, 0.15);
+  color: var(--accent);
+  border: 1px solid rgba(88, 166, 255, 0.3);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.pro-url-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 2px;
+}
+
 /* === Upgrade Button === */
 .upgrade-btn {
   background: rgba(88, 166, 255, 0.12);
