@@ -342,7 +342,8 @@ export function InputBox({ onSend, onCancel, onCommand, agentMode, agentStatus, 
             : ""}
         </span>
 
-        {/* Plan Mode toggle */}
+        {/* Plan Mode toggle — only meaningful when agent is active */}
+        {agentMode && agentStatus !== "off" && (
         <label class={`mode-chip ${planMode ? "mode-chip--plan" : ""}`} title="Plan first, then implement after approval">
           <input
             type="checkbox"
@@ -354,8 +355,10 @@ export function InputBox({ onSend, onCancel, onCommand, agentMode, agentStatus, 
           <span class="mode-chip-label">{t("plan.label")}</span>
           <span class="mode-chip-badge">{planMode ? t("agent.on") : t("agent.off")}</span>
         </label>
+        )}
 
-        {/* Bypass Permissions toggle */}
+        {/* Bypass Permissions toggle — only meaningful when agent is active */}
+        {agentMode && agentStatus !== "off" && (
         <label class={`mode-chip ${bypassPermissions ? "mode-chip--bypass" : ""}`} title="Skip tool confirmation prompts (restarts session)">
           <input
             type="checkbox"
@@ -367,6 +370,7 @@ export function InputBox({ onSend, onCancel, onCommand, agentMode, agentStatus, 
           <span class="mode-chip-label">{t("bypass.label")}</span>
           <span class="mode-chip-badge">{bypassPermissions ? t("agent.on") : t("agent.off")}</span>
         </label>
+        )}
 
         <div style="flex:1" />
 
