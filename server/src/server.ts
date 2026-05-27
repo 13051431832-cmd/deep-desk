@@ -305,6 +305,33 @@ Bun.serve({
               } catch (err: any) { return new Response(JSON.stringify({ error: err.message }), { status: 500 }); }
             }
 
+            // ── Tauri drag-drop: read files from paths ─────────────────
+            if (url.pathname === "/api/drop" && req.method === "POST") {
+              try {
+                const body = await req.json() as any;
+                const paths: string[] = body.paths || [];
+                const results = [];
+                for (const p of paths) {
+                  const file = Bun.file(p);
+                  if (!(await file.exists())) { results.push({ path: p, error: "not found" }); continue; }
+                  const name = p.split("/").pop() || p.split("\\").pop() || "file";
+                  const size = file.size || 0;
+                  let textPreview = "";
+                  try {
+                    const buf = await file.bytes();
+                    const raw = new TextDecoder("utf-8", { fatal: true }).decode(buf);
+                    const printable = raw.replace(/[^\x20-\x7E\x0A\x0D\x09\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]/g, "");
+                    if (printable.length > raw.length * 0.7) textPreview = raw.slice(0, 5000);
+                    else textPreview = "(binary file)";
+                  } catch { textPreview = "(binary file)"; }
+                  results.push({ path: p, name, size, textPreview });
+                }
+                return new Response(JSON.stringify({ ok: true, files: results }), {
+                  headers: { "Content-Type": "application/json" },
+                });
+              } catch (err: any) { return new Response(JSON.stringify({ error: err.message }), { status: 500 }); }
+            }
+
             if (url.pathname === "/api/vision" && req.method === "POST") {
       try {
         const contentType = req.headers.get("content-type") || "";

@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback } from "preact/hooks";
+import { useRef, useState, useCallback, useEffect } from "preact/hooks";
 import { t } from "../i18n";
 
 interface Props {
@@ -297,6 +297,33 @@ export function InputBox({ onSend, onCancel, onCommand, agentMode, agentStatus, 
   const handleDragOver = (e: DragEvent) => {
     e.preventDefault();
   };
+
+  // Listen for Tauri-native file drops (forwarded from Rust)
+  useEffect(() => {
+    (window as any).__tauri_drop = async (paths: string[]) => {
+      try {
+        const resp = await fetch("/api/drop", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ paths }),
+        });
+        const data = await resp.json();
+        if (data.ok && data.files) {
+          for (const f of data.files) {
+            const fa: FileAttachment = {
+              id: Math.random().toString(36).slice(2, 8),
+              file: new File([], f.name),
+              content: f.error ? `Error: ${f.error}` : f.textPreview || `[File path: ${f.path}]`,
+              loading: false,
+              error: f.error || null,
+            };
+            setFiles((prev) => [...prev, fa]);
+          }
+        }
+      } catch {}
+    };
+    return () => { delete (window as any).__tauri_drop; };
+  }, []);
 
   const handleFileSelect = (e: Event) => {
     const input = e.target as HTMLInputElement;

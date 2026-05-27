@@ -24,9 +24,23 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::Destroyed = event {
-                server::kill();
-                window.app_handle().exit(0);
+            match event {
+                tauri::WindowEvent::Destroyed => {
+                    server::kill();
+                    window.app_handle().exit(0);
+                }
+                tauri::WindowEvent::DragDrop(e) => {
+                    if let tauri::DragDropEvent::Drop { paths, .. } = e {
+                        let paths_str = serde_json::to_string(&paths).unwrap_or_default();
+                        if let Some(wv) = window.app_handle().get_webview_window("main") {
+                            let _ = wv.eval(&format!(
+                                "window.__tauri_drop && window.__tauri_drop({})",
+                                paths_str
+                            ));
+                        }
+                    }
+                }
+                _ => {}
             }
         })
         .run(tauri::generate_context!())
