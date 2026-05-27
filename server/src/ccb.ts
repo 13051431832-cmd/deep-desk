@@ -21,6 +21,7 @@ const CCB_ENV_KEYS = [
 
 function buildEnv(): Record<string, string> {
   const env: Record<string, string> = {};
+  const isWin = process.platform === "win32";
   for (const key of CCB_ENV_KEYS) {
     if (process.env[key]) env[key] = process.env[key]!;
   }
@@ -31,6 +32,12 @@ function buildEnv(): Record<string, string> {
   env.ANTHROPIC_BASE_URL = env.ANTHROPIC_BASE_URL || "https://api.deepseek.com/anthropic";
   env.ANTHROPIC_MODEL = env.ANTHROPIC_MODEL || "deepseek-v4-pro";
   env.ANTHROPIC_SMALL_FAST_MODEL = env.ANTHROPIC_SMALL_FAST_MODEL || "deepseek-v4-flash";
+  // Windows: ensure SHELL points to git bash if available
+  if (isWin && !env.SHELL) {
+    for (const candidate of ["C:\\Program Files\\Git\\bin\\bash.exe", "C:\\Program Files (x86)\\Git\\bin\\bash.exe"]) {
+      if (existsSync(candidate)) { env.SHELL = candidate; break; }
+    }
+  }
   return env;
 }
 

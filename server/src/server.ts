@@ -23,6 +23,7 @@ let CURRENT_VERSION = "0.0.0";
 try { CURRENT_VERSION = (await Bun.file(VERSION_FILE).text()).trim(); } catch { /* use default */ }
 mkdirSync(VISION_UPLOAD_DIR, { recursive: true });
 mkdirSync(CONVERSATIONS_DIR, { recursive: true });
+const DEEPDESK_ENV = join(homedir(), ".deepdesk.env");
 
 // ── Session management ────────────────────────────────────────────────
 // Sessions live by conversation ID. Multiple browser tabs share one session.
@@ -179,6 +180,37 @@ Bun.serve({
           current: CURRENT_VERSION, latest: null, hasUpdate: false,
           error: err.message || "Check failed",
         }), { headers: { "Content-Type": "application/json" } });
+      }
+    }
+
+    // ── Settings API ─────────────────────────────────────────────────
+    if (url.pathname === "/api/settings") {
+      if (req.method === "GET") {
+        const hasDeepSeek = !!(process.env.DEEPSEEK_API_KEY || process.env.OPENAI_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
+        return new Response(JSON.stringify({
+          deepseekKey: hasDeepSeek ? "••••configured" : "",
+          qwenKey: (process.env.QWEN_API_KEY || process.env.DASHSCOPE_API_KEY) ? "••••configured" : "",
+        }), { headers: { "Content-Type": "application/json" } });
+      }
+      if (req.method === "POST") {
+        try {
+          const body = await req.json() as any;
+          let envContent = "";
+          try { envContent = await Bun.file(DEEPDESK_ENV).text(); } catch { /* new file */ }
+          const lines = envContent.split("\n").filter(l => l.trim() && !l.trim().startsWith("#"));
+          const envMap: Record<string, string> = {};
+          for (const line of lines) {
+            const eq = line.indexOf("=");
+            if (eq > 0) envMap[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
+          }
+          if (body.deepseekKey) envMap.DEEPSEEK_API_KEY = body.deepseekKey;
+          if (body.qwenKey) envMap.QWEN_API_KEY = body.qwenKey;
+          const newContent = Object.entries(envMap).map(([k, v]) => `${k}=${v}`).join("\n") + "\n";
+          await Bun.write(DEEPDESK_ENV, newContent);
+          return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+        } catch (err: any) {
+          return new Response(JSON.stringify({ error: err.message }), { status: 500 });
+        }
       }
     }
 

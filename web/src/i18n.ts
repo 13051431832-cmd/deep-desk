@@ -151,6 +151,9 @@ const translations: Record<string, Record<Lang, string>> = {
 
   // Language switcher
   "lang.switch":           { zh: "EN", en: "中文" },
+
+  // Settings
+  "settings.desc":          { zh: "设置 API Key 后无需在终端配置环境变量。", en: "Set API keys without terminal config." },
 };
 
 // ── Public API ───────────────────────────────────────────────────────

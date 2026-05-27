@@ -23,6 +23,7 @@ import { ConversationTabs } from "./components/ConversationTabs";
 import { t, lang, toggleLang } from "./i18n";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { check } from "@tauri-apps/plugin-updater";
+import { SettingsPanel } from "./components/SettingsPanel";
 
 const PORT = 3456;
 
@@ -219,6 +220,8 @@ export function App() {
     handleExternalUrl(updateInfo?.macUrl || updateInfo?.winUrl || "");
   };
 
+  const [showSettings, setShowSettings] = useState(false);
+
   const isStreaming = active?.status === "Thinking..." || active?.status === "Streaming..." || active?.agentStatus === "warming";
 
   // Onboarding card descriptions
@@ -232,6 +235,9 @@ export function App() {
   return (
     <div class="app">
       <div class="lang-bar">
+        <button class="lang-btn" onClick={() => setShowSettings(true)} title="API Keys">
+          ⚙
+        </button>
         <button class="lang-btn" onClick={toggleLang} title="Switch language / 切换语言">
           {t("lang.switch")}
         </button>
@@ -337,6 +343,7 @@ export function App() {
           </div>
         </main>
       )}
+      {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
     </div>
   );
 }
