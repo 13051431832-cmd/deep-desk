@@ -1,5 +1,10 @@
 use tauri::Manager;
 
+#[tauri::command]
+fn open_external(url: String) {
+    open::that(url).ok();
+}
+
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 const BUN_PATH: &str = "binaries/bun-darwin-aarch64/bun";
 #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
@@ -16,6 +21,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .invoke_handler(tauri::generate_handler![open_external])
         .setup(|app| {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {

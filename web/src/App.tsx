@@ -306,7 +306,14 @@ export function App() {
               <button
                 class="upgrade-btn"
                 ref={(el) => {
-                  if (el) el.onclick = () => window.open("https://shieldyh.com", "_blank");
+                  if (el) el.onclick = () => {
+                    const tauri = (window as any).__TAURI_INTERNALS__;
+                    if (tauri) {
+                      tauri.invoke("open_external", { url: "https://shieldyh.com" });
+                    } else {
+                      window.open("https://shieldyh.com", "_blank");
+                    }
+                  };
                 }}
                 title="Get Pro: 200+ skills, auto-start, 3 devices"
               >
