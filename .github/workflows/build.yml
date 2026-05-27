@@ -58,6 +58,12 @@ jobs:
           curl -fsSL https://github.com/oven-sh/bun/releases/latest/download/bun-windows-x64.zip -o /tmp/b.zip
           unzip -o /tmp/b.zip -d /tmp/bun-win/
           mv /tmp/bun-win/bun-windows-x64/bun.exe src-tauri/binaries/bun-windows-x64/bun.exe
+      - name: Download Git (MinGit portable)
+        shell: bash
+        run: |
+          mkdir -p src-tauri/binaries/git
+          curl -fsSL https://github.com/git-for-windows/git/releases/download/v2.52.0.windows.1/MinGit-2.52.0-64-bit.zip -o /tmp/git.zip
+          unzip -o /tmp/git.zip -d src-tauri/binaries/git/
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
