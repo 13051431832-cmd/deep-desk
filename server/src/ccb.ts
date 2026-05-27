@@ -32,10 +32,17 @@ function buildEnv(): Record<string, string> {
   env.ANTHROPIC_BASE_URL = env.ANTHROPIC_BASE_URL || "https://api.deepseek.com/anthropic";
   env.ANTHROPIC_MODEL = env.ANTHROPIC_MODEL || "deepseek-v4-pro";
   env.ANTHROPIC_SMALL_FAST_MODEL = env.ANTHROPIC_SMALL_FAST_MODEL || "deepseek-v4-flash";
-  // Windows: ensure SHELL points to git bash if available
-  if (isWin && !env.SHELL) {
-    for (const candidate of ["C:\\Program Files\\Git\\bin\\bash.exe", "C:\\Program Files (x86)\\Git\\bin\\bash.exe"]) {
-      if (existsSync(candidate)) { env.SHELL = candidate; break; }
+  // Windows: ensure SHELL + PATH include git bash if available
+  if (isWin) {
+    for (const gitDir of ["C:\\Program Files\\Git\\bin", "C:\\Program Files (x86)\\Git\\bin"]) {
+      if (existsSync(gitDir + "\\bash.exe")) {
+        if (!env.SHELL) env.SHELL = gitDir + "\\bash.exe";
+        // Prepend git bin and usr/bin (for sh, grep, etc.) to PATH
+        const usrBin = gitDir + "\\..\\usr\\bin";
+        const extra = gitDir + ";" + usrBin;
+        env.PATH = extra + ";" + (env.PATH || process.env.PATH || "");
+        break;
+      }
     }
   }
   return env;
