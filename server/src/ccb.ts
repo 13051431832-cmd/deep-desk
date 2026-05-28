@@ -276,8 +276,12 @@ export function spawnSession(callbacks: {
     kill() {
       if (!proc) return;
       procReady = false;
-      try { process.kill(-proc.pid, "SIGTERM"); } catch {}
-      try { proc.kill("SIGTERM"); } catch {}
+      if (process.platform === "win32") {
+        try { proc.kill(); } catch {}
+      } else {
+        try { process.kill(-proc.pid, "SIGTERM"); } catch {}
+        try { proc.kill("SIGTERM"); } catch {}
+      }
     },
   };
 
@@ -325,8 +329,10 @@ export function spawnSession(callbacks: {
         mkdirSync(skillsDir, { recursive: true });
         const installScript = join(pluginDir, "install.sh");
         if (existsSync(installScript)) {
+          const installEnv = buildEnv();
+          installEnv.HOME = home;
           Bun.spawnSync(["bash", installScript], {
-            cwd: pluginDir, env: { ...process.env, HOME: home } as Record<string, string>,
+            cwd: pluginDir, env: installEnv as Record<string, string>,
             stdout: "pipe", stderr: "pipe",
           });
         }
@@ -410,7 +416,15 @@ export function spawnSession(callbacks: {
         // Process exited but stdout didn't close — give it 30s to drain
         const timeoutPromise = new Promise<void>(r => setTimeout(r, 30000));
         await Promise.race([readPromise, timeoutPromise]);
-        if (!readDone) { try { process.kill(-proc.pid, "SIGKILL"); } catch {} try { proc.kill("SIGKILL"); } catch {} await readPromise.catch(() => {}); }
+        if (!readDone) {
+          if (process.platform === "win32") {
+            try { proc.kill(); } catch {}
+          } else {
+            try { process.kill(-proc.pid, "SIGKILL"); } catch {}
+            try { proc.kill("SIGKILL"); } catch {}
+          }
+          await readPromise.catch(() => {});
+        }
       }
       // Collect stderr
       let stderrText = "";

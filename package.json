@@ -9,7 +9,6 @@
     "start": "bun server/src/server.ts"
   },
   "dependencies": {
-    "node-pty": "^1.0.0",
     "strip-ansi": "^7.1.0",
     "ws": "^8.18.0"
   },

@@ -97,18 +97,17 @@ fn load_fallback(app: &AppHandle) {
     }
 }
 
-/// Kill the Bun server process.
+/// Kill the Bun server process and all its children.
 pub fn kill() {
     if let Some(mut child) = SERVER_PROCESS.lock().unwrap().take() {
         eprintln!("[Deep Desk] Stopping server...");
-        // SIGTERM first
         #[cfg(unix)]
         {
+            // SIGTERM the process group — propagates to CCB, node, etc.
             nix::sys::signal::kill(
                 nix::unistd::Pid::from_raw(child.id() as i32),
                 nix::sys::signal::Signal::SIGTERM,
             ).ok();
-            // Wait up to 3s
             for _ in 0..30 {
                 match child.try_wait() {
                     Ok(Some(_)) => break,
@@ -116,7 +115,18 @@ pub fn kill() {
                 }
             }
         }
-        // Force kill
+        #[cfg(windows)]
+        {
+            // taskkill /T kills the process tree — bun.exe + CCB + node children.
+            // child.kill() alone would only TerminateProcess bun.exe, orphaning subprocesses.
+            let pid = child.id();
+            let _ = std::process::Command::new("taskkill")
+                .args(["/T", "/F", "/PID", &pid.to_string()])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
+        // Fallback force kill (Unix: after SIGTERM grace period; Windows: if taskkill failed)
         let _ = child.kill();
         let _ = child.wait();
         eprintln!("[Deep Desk] Server stopped.");
