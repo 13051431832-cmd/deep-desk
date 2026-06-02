@@ -33,17 +33,24 @@ if [ "${1:-}" = "--promote" ]; then
   DMG="$SCRIPT_DIR/Deep-Desk-${CURRENT}.dmg"
   echo "  DMG: $DMG ($(du -sh "$DMG" | cut -f1))"
 
-  # Windows: skip for now (Tauri MSI requires cross-compilation)
-  echo "Windows build skipped (Tauri MSI requires Windows host)"
+  # Windows: check for CI-built artifacts (Tauri MSI requires Windows host)
+  WIN_MSI=$(ls "$SCRIPT_DIR/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi"/*.msi 2>/dev/null | head -1 || echo "")
+  if [ -n "$WIN_MSI" ] && [ -f "$WIN_MSI" ]; then
+    cp "$WIN_MSI" "$SCRIPT_DIR/Deep-Desk-${CURRENT}-x64.msi"
+    echo "  Windows MSI: $WIN_MSI ($(du -sh "$WIN_MSI" | cut -f1))"
+  else
+    echo "  (Windows MSI not found — skipping, build via GitHub Actions first)"
+  fi
   ZIP=""
 
   echo "Promoting v$CURRENT to stable..."
 
   ossutil cp "$DMG" "$CDN_BASE/Deep-Desk-latest.dmg" -f | tail -1
-  if [ -n "$ZIP" ] && [ -f "$ZIP" ]; then
-    ossutil cp "$ZIP" "$CDN_BASE/Deep-Desk-setup.zip" -f | tail -1
+  if [ -n "$WIN_MSI" ] && [ -f "$WIN_MSI" ]; then
+    ossutil cp "$WIN_MSI" "$CDN_BASE/Deep-Desk-latest.exe" -f | tail -1
+    echo "  ✓ Windows MSI uploaded"
   else
-    echo "  (Windows package not available — skipping)"
+    echo "  (Windows MSI not available — skipping)"
   fi
 
   # Upload auto-update artifacts
@@ -52,21 +59,18 @@ if [ "${1:-}" = "--promote" ]; then
   SIG=$(ls "$BUNDLE_DIR"/*.app.tar.gz.sig 2>/dev/null | head -1 || echo "")
   if [ -n "$TAR_GZ" ] && [ -n "$SIG" ]; then
     ossutil cp "$TAR_GZ" "$CDN_BASE/Deep-Desk-${CURRENT}_aarch64.app.tar.gz" -f | tail -1
-    SIG_CONTENT=$(cat "$SIG")
-    # Create latest.json for Tauri updater
-    cat > /tmp/latest.json << JSONEOF
-{
-  "version": "${CURRENT}",
-  "notes": "Auto-update to v${CURRENT}",
-  "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "platforms": {
-    "darwin-aarch64": {
-      "signature": "${SIG_CONTENT}",
-      "url": "https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-${CURRENT}_aarch64.app.tar.gz"
-    }
-  }
-}
-JSONEOF
+    MAC_SIG_CONTENT=$(cat "$SIG")
+    # Build latest.json with available platforms
+    echo -n "{\"version\":\"${CURRENT}\",\"notes\":\"Auto-update to v${CURRENT}\",\"pub_date\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"platforms\":{" > /tmp/latest.json
+    echo -n "\"darwin-aarch64\":{\"signature\":\"${MAC_SIG_CONTENT}\",\"url\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-${CURRENT}_aarch64.app.tar.gz\"}" >> /tmp/latest.json
+    # Windows: include if MSI + .sig exist
+    WIN_MSI=$(ls "$SCRIPT_DIR/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi"/*.msi 2>/dev/null | head -1 || echo "")
+    WIN_SIG=$(ls "$SCRIPT_DIR/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi"/*.msi.sig 2>/dev/null | head -1 || echo "")
+    if [ -n "$WIN_MSI" ] && [ -n "$WIN_SIG" ]; then
+      WIN_SIG_CONTENT=$(cat "$WIN_SIG")
+      echo -n ",\"windows-x86_64\":{\"signature\":\"${WIN_SIG_CONTENT}\",\"url\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-${CURRENT}_x64.msi\"}" >> /tmp/latest.json
+    fi
+    echo "}}" >> /tmp/latest.json
     ossutil cp /tmp/latest.json "$CDN_BASE/latest.json" -f | tail -1
     echo "  ✓ Auto-update artifacts uploaded"
   else
@@ -80,7 +84,11 @@ JSONEOF
   echo "╚══════════════════════════════════════╝"
 
   # Update version manifest for auto-update
-  echo "{\"version\":\"$CURRENT\",\"macUrl\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-latest.dmg\",\"winUrl\":\"\"}" > "$SCRIPT_DIR/version.json"
+  WIN_URL=""
+  if [ -n "$WIN_MSI" ]; then
+    WIN_URL="https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-latest.exe"
+  fi
+  echo "{\"version\":\"$CURRENT\",\"macUrl\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-latest.dmg\",\"winUrl\":\"$WIN_URL\"}" > "$SCRIPT_DIR/version.json"
   ossutil cp "$SCRIPT_DIR/version.json" "$CDN_BASE/version.json" -f | tail -1
   echo "  ✓ version.json updated"
   exit 0
@@ -148,7 +156,7 @@ echo "[3/3] Uploading versioned files..."
 ossutil cp "$DMG" "$CDN_BASE/Deep-Desk-${NEW}.dmg" | tail -1
 ossutil cp "$ZIP" "$CDN_BASE/Deep-Desk-setup-${NEW}.zip" | tail -1
 # Update version manifest for auto-update
-echo "{\"version\":\"$NEW\",\"macUrl\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-latest.dmg\",\"winUrl\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-setup.zip\"}" > "$SCRIPT_DIR/version.json"
+echo "{\"version\":\"$NEW\",\"macUrl\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-latest.dmg\",\"winUrl\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-latest.exe\"}" > "$SCRIPT_DIR/version.json"
 ossutil cp "$SCRIPT_DIR/version.json" "$CDN_BASE/version.json" -f | tail -1
 echo "  ✓ Uploaded (versioned only — NOT promoted to latest)"
 

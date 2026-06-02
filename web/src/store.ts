@@ -195,6 +195,19 @@ function loadFromLocalStorage(port: number): boolean {
   } catch { return false; }
 }
 
+// ── License state ──────────────────────────────────────────────────────
+export const isPro = signal(false);
+
+export async function checkProStatus() {
+  try {
+    const resp = await fetch("/api/license/status");
+    if (resp.ok) {
+      const data = await resp.json();
+      isPro.value = !!data.pro;
+    }
+  } catch {}
+}
+
 // ── Global state ───────────────────────────────────────────────────────
 export const conversations = signal<Conversation[]>([]);
 export const activeConvId = signal<string | null>(null);

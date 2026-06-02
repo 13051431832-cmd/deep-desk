@@ -16,6 +16,8 @@ import {
   triggerAutoSave,
   stopAgent,
   startAgent,
+  isPro,
+  checkProStatus,
 } from "./store";
 import { ChatView } from "./components/ChatView";
 import { InputBox } from "./components/InputBox";
@@ -29,6 +31,7 @@ const PORT = 3456;
 
 export function App() {
   useEffect(() => {
+    checkProStatus();
     if (conversations.value.length === 0) {
       loadSessions(PORT).then((restored) => {
         if (!restored) newConversation(PORT);
@@ -170,6 +173,7 @@ export function App() {
   const [updateInfo, setUpdateInfo] = useState<{
     hasUpdate: boolean; latest: string; current: string;
     downloading: boolean;
+    macUrl?: string; winUrl?: string;
   } | null>(null);
 
   const checkUpdate = async () => {
@@ -301,7 +305,7 @@ export function App() {
                   {updateInfo.downloading ? "⟳ Downloading..." : t("misc.update", { version: updateInfo.latest })}
                 </button>
               )}
-              <span class="pro-badge" title="Pro 版：MCP x8 + Skills x200+">⚡ Pro</span>
+              {isPro.value && <span class="pro-badge" title={t("license.proBadge")}>⚡ Pro</span>}
               <span class="wechat-contact" title="使用疑问请联系微信">
                 💬 疑问解答微信号：YA_24601
               </span>

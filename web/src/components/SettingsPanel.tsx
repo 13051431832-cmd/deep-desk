@@ -1,15 +1,21 @@
 import { useState, useEffect } from "preact/hooks";
+import { checkProStatus } from "../store";
 
 interface MCPInfo { enabled: boolean; description: string; }
 
+const isWin = navigator.platform.toLowerCase().includes("win");
+
 export function SettingsPanel({ onClose }: { onClose: () => void }) {
-  const [tab, setTab] = useState<"keys" | "mcp">("keys");
+  const [tab, setTab] = useState<"keys" | "mcp" | "license">("keys");
   const [deepseekKey, setDeepseekKey] = useState("");
   const [qwenKey, setQwenKey] = useState("");
   const [keyStatus, setKeyStatus] = useState<"loading" | "ready" | "saving" | "saved">("loading");
   const [hasConfig, setHasConfig] = useState(false);
   const [mcpServers, setMcpServers] = useState<Record<string, MCPInfo>>({});
   const [mcpLoading, setMcpLoading] = useState(true);
+  const [licenseKey, setLicenseKey] = useState("");
+  const [licenseStatus, setLicenseStatus] = useState<"idle" | "activating" | "success" | "alreadyPro" | "error">("idle");
+  const [licenseError, setLicenseError] = useState("");
 
   useEffect(() => {
     fetch("/api/settings")
@@ -43,6 +49,32 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
     } catch { /* revert on error */ }
   };
 
+  const activateLicense = async () => {
+    if (!licenseKey.trim()) return;
+    setLicenseStatus("activating");
+    setLicenseError("");
+    try {
+      const resp = await fetch("/api/license/redeem", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ licenseKey: licenseKey.trim(), package: "deepdesk-pro" }),
+      });
+      const data = await resp.json();
+      if (resp.ok && data.pro) {
+        await checkProStatus();
+        setLicenseStatus("success");
+        setLicenseKey("");
+      } else if (resp.ok && data.alreadyPro) {
+        setLicenseStatus("alreadyPro");
+      } else {
+        setLicenseStatus("error");
+        setLicenseError(data.error || "Activation failed");
+      }
+    } catch {
+      setLicenseStatus("error");
+      setLicenseError("Network error — check your connection");
+    }
+  };
+
   return (
     <div class="settings-overlay" onClick={(e) => { if ((e.target as HTMLElement).classList.contains("settings-overlay")) onClose(); }}>
       <div class="settings-panel">
@@ -54,6 +86,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
         <div class="settings-tabs">
           <button class={`settings-tab ${tab === "keys" ? "settings-tab--active" : ""}`} onClick={() => setTab("keys")}>🔑 Keys</button>
           <button class={`settings-tab ${tab === "mcp" ? "settings-tab--active" : ""}`} onClick={() => setTab("mcp")}>🔌 MCP</button>
+          <button class={`settings-tab ${tab === "license" ? "settings-tab--active" : ""}`} onClick={() => setTab("license")}>📜 License</button>
         </div>
 
         {tab === "keys" && (
@@ -90,8 +123,35 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
           </div>
         )}
 
+        {tab === "license" && (
+          <div>
+            <p class="settings-desc">Activate a Pro license to unlock MCP servers and 200+ skills.</p>
+            <div class="license-form">
+              <input
+                type="text"
+                class="license-input"
+                placeholder="XXXX-XXXX-XXXX-XXXX"
+                value={licenseKey}
+                onInput={(e) => setLicenseKey((e.target as HTMLInputElement).value)}
+                disabled={licenseStatus === "activating" || licenseStatus === "success"}
+              />
+              <button
+                class="settings-save"
+                onClick={activateLicense}
+                disabled={licenseStatus === "activating" || licenseStatus === "success" || !licenseKey.trim()}
+              >
+                {licenseStatus === "activating" ? "Activating..." : licenseStatus === "success" ? "✓ Activated" : "Activate"}
+              </button>
+            </div>
+            {licenseStatus === "success" && <p class="license-ok">✓ Pro activated — restart your conversation to load paid skills.</p>}
+            {licenseStatus === "alreadyPro" && <p class="license-ok">✓ Already Pro</p>}
+            {licenseStatus === "error" && <p class="license-err">{licenseError}</p>}
+            <p class="settings-note">Purchase a license at shieldyh.com</p>
+          </div>
+        )}
+
         {tab === "keys" && (
-          <p class="settings-note">Keys are saved to <code>~/.deepdesk.env</code>.</p>
+          <p class="settings-note">Keys are saved to <code>{isWin ? '%USERPROFILE%\\.deepdesk.env' : '~/.deepdesk.env'}</code>.</p>
         )}
       </div>
     </div>

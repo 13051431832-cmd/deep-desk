@@ -2,14 +2,18 @@ import { homedir } from "os";
 import { join } from "path";
 import { fileURLToPath } from "url";
 import type { Subprocess } from "bun";
-import { existsSync, mkdirSync } from "fs";
+import { existsSync, mkdirSync, cpSync } from "fs";
 
 const home = homedir();
 const MODULE_DIR = fileURLToPath(new URL(".", import.meta.url));
+// Bundled plugins — complete edition ships these in the app bundle
+const BUNDLED_PLUGINS = join(MODULE_DIR, "..", "bundled-plugins", "claude-plugins-official");
 
 // Bundled bun binary (falls back to system bun)
 const BUNDLED_BUN = join(MODULE_DIR, "../../binaries",
-  process.platform === "win32" ? "bun-windows-x64/bun.exe" : "bun-darwin-aarch64/bun");
+  process.platform === "win32"
+    ? "bun-windows-x64/bun.exe"
+    : `bun-darwin-${process.arch === "arm64" ? "aarch64" : "x64"}/bun`);
 const SYSTEM_BUN = join(home, ".bun", "bin", process.platform === "win32" ? "bun.exe" : "bun");
 const BUN_BIN = existsSync(BUNDLED_BUN) ? BUNDLED_BUN : SYSTEM_BUN;
 
@@ -26,11 +30,25 @@ const CCB_ENV_KEYS = [
   "CLAUDE_CODE_USE_OPENAI", "QWEN_API_KEY", "DASHSCOPE_API_KEY",
 ];
 
+// Windows-essential env vars (needed for bun/node to find system DLLs, temp, etc.)
+const WIN_ESSENTIAL_ENV = [
+  "SystemRoot", "TEMP", "TMP", "USERPROFILE", "APPDATA", "LOCALAPPDATA",
+  "ProgramFiles", "ProgramFiles(x86)", "CommonProgramFiles",
+  "COMPUTERNAME", "USERDOMAIN", "HOMEDRIVE", "HOMEPATH",
+];
+
 function buildEnv(): Record<string, string> {
   const env: Record<string, string> = {};
   const isWin = process.platform === "win32";
   for (const key of CCB_ENV_KEYS) {
     if (process.env[key]) env[key] = process.env[key]!;
+  }
+  // Windows: preserve essential system env vars (SystemRoot, TEMP, etc.)
+  // Without these, bun/node can't find system DLLs and crashes immediately
+  if (isWin) {
+    for (const key of WIN_ESSENTIAL_ENV) {
+      if (process.env[key]) env[key] = process.env[key]!;
+    }
   }
   env.TERM = env.TERM || "xterm-256color";
   env.NO_COLOR = "1";
@@ -76,6 +94,93 @@ function buildEnv(): Record<string, string> {
     }
   }
   return env;
+}
+
+// ── Startup diagnostics ──────────────────────────────────────────────────
+
+function diagnose(): string[] {
+  const lines: string[] = [];
+  const isWin = process.platform === "win32";
+
+  // 1. Bun binary
+  lines.push(`Bun binary: ${BUN_BIN}`);
+  if (!existsSync(BUN_BIN)) {
+    lines.push(`  ❌ NOT FOUND — 进程无法启动的根本原因`);
+    if (isWin) {
+      const bundled = join(MODULE_DIR, "../../binaries", "bun-windows-x64", "bun.exe");
+      const system = join(home, ".bun", "bin", "bun.exe");
+      lines.push(`  打包路径: ${bundled} (${existsSync(bundled) ? "存在" : "不存在"})`);
+      lines.push(`  系统路径: ${system} (${existsSync(system) ? "存在" : "不存在"})`);
+    }
+  } else {
+    lines.push(`  ✅ 存在`);
+  }
+
+  // 2. CCB script
+  lines.push(`CCB 脚本: ${CCB_SCRIPT}`);
+  if (!existsSync(CCB_SCRIPT)) {
+    lines.push(`  ❌ NOT FOUND — 将尝试自动安装`);
+  } else {
+    lines.push(`  ✅ 存在`);
+  }
+
+  // 3. Bash (Windows)
+  if (isWin) {
+    const bash = findBash();
+    lines.push(`Bash: ${bash}`);
+    if (bash === "bash") {
+      lines.push(`  ⚠️ 未找到 bash.exe，将使用字面量 "bash"（可能在 PATH 中找不到）`);
+    } else if (existsSync(bash)) {
+      lines.push(`  ✅ 存在`);
+    } else {
+      lines.push(`  ❌ 路径指向的文件不存在`);
+    }
+  }
+
+  // 4. Node modules
+  const nodeModules = join(home, "node_modules");
+  lines.push(`node_modules: ${nodeModules}`);
+  if (!existsSync(nodeModules)) {
+    lines.push(`  ⚠️ 目录不存在，将在安装时创建`);
+  } else {
+    lines.push(`  ✅ 存在`);
+  }
+
+  // 5. Git (Windows)
+  if (isWin) {
+    const gitDirs = [
+      join(MODULE_DIR, "../../binaries/git"),
+      "C:\\Program Files\\Git",
+      "C:\\Program Files (x86)\\Git",
+    ];
+    const found = gitDirs.filter(d => existsSync(d));
+    lines.push(`Git 目录: ${found.length > 0 ? found.join(", ") : "未找到任何 Git 安装"}`);
+  }
+
+  // 6. PATH
+  const env = buildEnv();
+  lines.push(`PATH 条目数: ${(env.PATH || "").split(isWin ? ";" : ":").length}`);
+  lines.push(`SHELL: ${env.SHELL || "(未设置)"}`);
+
+  return lines;
+}
+
+function findBash(): string {
+  if (process.platform !== "win32") return "bash";
+  const bundledGit = join(MODULE_DIR, "../../binaries/git");
+  const candidateDirs = [
+    join(bundledGit, "usr\\bin"),
+    join(bundledGit, "cmd"),
+    join(bundledGit, "bin"),
+    "C:\\Program Files\\Git\\bin",
+    "C:\\Program Files\\Git\\usr\\bin",
+    "C:\\Program Files (x86)\\Git\\bin",
+  ];
+  for (const dir of candidateDirs) {
+    const bashExe = dir + "\\bash.exe";
+    if (existsSync(bashExe)) return bashExe;
+  }
+  return "bash";
 }
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -289,6 +394,11 @@ export function spawnSession(callbacks: {
 
   // Auto-install claude-code-best + superpowers if not present
   function ensureCCB(): boolean {
+    if (!existsSync(BUN_BIN)) {
+      const diag = diagnose();
+      callbacks.onError(`❌ Bun 未找到: ${BUN_BIN}\n请确保 Deep Desk 安装完整，或手动安装 Bun: https://bun.sh\n\n诊断信息:\n${diag.join("\n")}`);
+      return false;
+    }
     if (!existsSync(CCB_SCRIPT)) {
       callbacks.onError("Installing AI engine (one-time setup, ~30s)...");
       try {
@@ -298,8 +408,9 @@ export function spawnSession(callbacks: {
           stdout: "pipe", stderr: "pipe",
         });
         if (result.exitCode !== 0 || !existsSync(CCB_SCRIPT)) {
-          const stderr = new TextDecoder().decode(result.stderr).slice(0, 200);
-          callbacks.onError(`Engine install failed: ${stderr}`);
+          const stderr = new TextDecoder().decode(result.stderr).slice(0, 300);
+          const stdout = new TextDecoder().decode(result.stdout).slice(0, 300);
+          callbacks.onError(`Engine install failed (exit=${result.exitCode})\nstderr: ${stderr || "(empty)"}\nstdout: ${stdout || "(empty)"}`);
           return false;
         }
         callbacks.onError("Engine installed. Starting...");
@@ -309,32 +420,24 @@ export function spawnSession(callbacks: {
       }
     }
     // Install superpowers plugin for skills (Pro feature)
-    const skillsDir = join(home, ".claude", "skills");
-    if (!existsSync(skillsDir) || !existsSync(join(skillsDir, "brainstorming"))) {
+    // Complete edition: bundled plugins in the app resources (no network needed)
+    // Free edition: git clone from GitHub
+    const pluginCacheDir = join(home, ".claude", "plugins", "cache", "claude-plugins-official");
+    if (!existsSync(pluginCacheDir)) {
       callbacks.onError("Installing Pro skills (~200 skills, one-time)...");
       try {
-        mkdirSync(join(home, ".claude", "plugins"), { recursive: true });
-        const pluginDir = join(home, ".claude", "plugins", "cache", "claude-plugins-official", "superpowers");
-        if (!existsSync(pluginDir)) {
-          const clone = Bun.spawnSync(["git", "clone", "--depth", "1", "https://github.com/anthropics/claude-plugins-official.git", pluginDir], {
+        mkdirSync(join(home, ".claude", "plugins", "cache"), { recursive: true });
+        if (existsSync(BUNDLED_PLUGINS)) {
+          cpSync(BUNDLED_PLUGINS, pluginCacheDir, { recursive: true });
+        } else {
+          const clone = Bun.spawnSync(["git", "clone", "--depth", "1", "https://github.com/anthropics/claude-plugins-official.git", pluginCacheDir], {
             cwd: home, env: process.env as Record<string, string>,
             stdout: "pipe", stderr: "pipe",
           });
           if (clone.exitCode !== 0) {
             callbacks.onError("Skills install skipped (network issue). Agent will work without skills.");
-            return true; // Continue without skills
+            return true;
           }
-        }
-        // Copy skills to ~/.claude/skills/
-        mkdirSync(skillsDir, { recursive: true });
-        const installScript = join(pluginDir, "install.sh");
-        if (existsSync(installScript)) {
-          const installEnv = buildEnv();
-          installEnv.HOME = home;
-          Bun.spawnSync(["bash", installScript], {
-            cwd: pluginDir, env: installEnv as Record<string, string>,
-            stdout: "pipe", stderr: "pipe",
-          });
         }
         callbacks.onError("Pro skills ready. Starting agent...");
       } catch { callbacks.onError("Skills install skipped. Starting agent..."); }
@@ -369,13 +472,24 @@ export function spawnSession(callbacks: {
         callbacks.onError(`Failed to start (${restartCount}/${MAX_RESTARTS}). Retrying...`);
         setTimeout(() => startProc(), 2000);
       } else {
-        callbacks.onError("Cannot start AI engine. Check that bun and ccb are installed.");
+        const diag = diagnose();
+        callbacks.onError(`Cannot start AI engine after ${MAX_RESTARTS} attempts.\nError: ${err.message || err}\n\n诊断信息:\n${diag.join("\n")}`);
       }
       return;
     }
 
     procReady = true;
     flushQueue();
+
+    // Check for immediate crash (common on Windows: missing DLL, wrong arch)
+    proc.exited.then((exitCode) => {
+      if (procReady && exitCode !== 0 && restartCount < MAX_RESTARTS) {
+        procReady = false;
+        restartCount++;
+        callbacks.onError(`Process exited immediately (code ${exitCode}). Restarting (${restartCount}/${MAX_RESTARTS})...`);
+        startProc();
+      }
+    });
 
     const bufRef = { val: "" };
     const ftRef = { val: "" };

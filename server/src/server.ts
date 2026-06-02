@@ -2,7 +2,7 @@ import { runCCBStream, spawnSession } from "./ccb";
 import type { CCBSession } from "./ccb";
 import type { ServerWebSocket } from "bun";
 import { existsSync, mkdirSync } from "fs";
-import { homedir } from "os";
+import { homedir, tmpdir } from "os";
 import { join, normalize } from "path";
 import { fileURLToPath } from "node:url";
 
@@ -24,15 +24,29 @@ try { CURRENT_VERSION = (await Bun.file(VERSION_FILE).text()).trim(); } catch { 
 mkdirSync(VISION_UPLOAD_DIR, { recursive: true });
 mkdirSync(CONVERSATIONS_DIR, { recursive: true });
 const DEEPDESK_ENV = join(homedir(), ".deepdesk.env");
+const LICENSE_FILE = join(homedir(), ".deepdesk", "license.json");
+const SKILLS_DIR = join(homedir(), ".claude", "skills");
+const TOKEN_SERVER = "http://120.55.46.20:8080";
 const MCP_DEFAULTS = join(MODULE_DIR, "mcp-defaults.json");
+const MCP_DEFAULTS_REMOTE = "https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/mcp-defaults.json";
 
-// Copy default MCP config on first run
+// Copy default MCP config on first run (bundled or remote)
 if (!existsSync(MCP_CONFIG_LOCAL)) {
   try {
     const defaults = await Bun.file(MCP_DEFAULTS).text();
     mkdirSync(join(homedir(), ".claude"), { recursive: true });
     await Bun.write(MCP_CONFIG_LOCAL, defaults);
-  } catch { /* bundled defaults not available */ }
+  } catch {
+    // Free edition: download MCP defaults from CDN
+    try {
+      const resp = await fetch(MCP_DEFAULTS_REMOTE, { signal: AbortSignal.timeout(15000) });
+      if (resp.ok) {
+        const defaults = await resp.text();
+        mkdirSync(join(homedir(), ".claude"), { recursive: true });
+        await Bun.write(MCP_CONFIG_LOCAL, defaults);
+      }
+    } catch { /* network unavailable, skip */ }
+  }
 }
 
 // ── Session management ────────────────────────────────────────────────
@@ -372,7 +386,86 @@ Bun.serve({
               } catch (err: any) { return new Response(JSON.stringify({ error: err.message }), { status: 500 }); }
             }
 
-            if (url.pathname === "/api/vision" && req.method === "POST") {
+    	    // ── License API ─────────────────────────────────────────────────
+	    if (url.pathname === "/api/license/status") {
+	      try {
+	        const raw = await Bun.file(LICENSE_FILE).text();
+	        const lic = JSON.parse(raw);
+	        return new Response(JSON.stringify({ pro: !!lic.pro, package: lic.package || "", activatedAt: lic.activated_at || "" }), {
+	          headers: { "Content-Type": "application/json" },
+	        });
+	      } catch {
+	        return new Response(JSON.stringify({ pro: false, package: "", activatedAt: "" }), {
+	          headers: { "Content-Type": "application/json" },
+	        });
+	      }
+	    }
+
+	    if (url.pathname === "/api/license/redeem" && req.method === "POST") {
+	      try {
+	        const body = await req.json() as any;
+	        const key = (body.licenseKey || "").trim();
+	        const pkg = body.package || "deepdesk-pro";
+	        if (!key) return new Response(JSON.stringify({ error: "License key is required" }), { status: 400 });
+
+	        // 1. Validate key against token server
+	        const redeemResp = await fetch(`${TOKEN_SERVER}/api/redeem`, {
+	          method: "POST",
+	          headers: { "Content-Type": "application/json" },
+	          body: JSON.stringify({ license_key: key, package_name: pkg }),
+	          signal: AbortSignal.timeout(15000),
+	        });
+	        if (!redeemResp.ok) {
+	          const errText = await redeemResp.text().catch(() => "Unknown error");
+	          return new Response(JSON.stringify({ error: `Invalid license key (${redeemResp.status})` }), { status: 400 });
+	        }
+	        const redeemData = await redeemResp.json() as any;
+	        if (!redeemData.success || !redeemData.download_url) {
+	          return new Response(JSON.stringify({ error: redeemData.error || "Key validation failed" }), { status: 400 });
+	        }
+
+	        // 2. Download the .tar.gz to a temp file
+	        const tmpPath = join(tmpdir(), `deepdesk-skill-${Date.now()}.tar.gz`);
+	        const dlResp = await fetch(redeemData.download_url, { signal: AbortSignal.timeout(120000) });
+	        if (!dlResp.ok) {
+	          return new Response(JSON.stringify({ error: `Download failed (${dlResp.status})` }), { status: 500 });
+	        }
+	        await Bun.write(tmpPath, dlResp);
+
+	        // 3. Extract to skills dir
+	        mkdirSync(SKILLS_DIR, { recursive: true });
+	        const proc = Bun.spawn(["tar", "xzf", tmpPath, "-C", SKILLS_DIR], {
+	          stdout: "pipe", stderr: "pipe",
+	        });
+	        const [out, err] = await Promise.all([
+	          new Response(proc.stdout).text(),
+	          new Response(proc.stderr).text(),
+	        ]);
+	        const exitCode = await proc.exited;
+	        // Clean up temp file regardless
+	        try { await Bun.file(tmpPath).delete?.(); } catch {}
+
+	        if (exitCode !== 0) {
+	          return new Response(JSON.stringify({ error: `Extract failed: ${err || out}` }), { status: 500 });
+	        }
+
+	        // 4. Persist license state
+	        mkdirSync(join(homedir(), ".deepdesk"), { recursive: true });
+	        await Bun.write(LICENSE_FILE, JSON.stringify({
+	          pro: true,
+	          package: redeemData.package_name || pkg,
+	          activated_at: new Date().toISOString(),
+	        }, null, 2));
+
+	        return new Response(JSON.stringify({ ok: true, package: redeemData.package_name || pkg }), {
+	          headers: { "Content-Type": "application/json" },
+	        });
+	      } catch (err: any) {
+	        return new Response(JSON.stringify({ error: err.message || "Activation failed" }), { status: 500 });
+	      }
+	    }
+
+	    if (url.pathname === "/api/vision" && req.method === "POST") {
       try {
         const contentType = req.headers.get("content-type") || "";
         if (contentType.includes("multipart/form-data")) {

@@ -5,6 +5,24 @@ use tauri::{Manager, AppHandle};
 
 static SERVER_PROCESS: Mutex<Option<Child>> = Mutex::new(None);
 
+/// Write to stderr AND a log file (stderr is invisible on Windows GUI apps).
+macro_rules! log {
+    ($($arg:tt)*) => {{
+        let msg = format!($($arg)*);
+        eprintln!("{}", msg);
+        let temp = std::env::var("TEMP")
+            .or_else(|_| std::env::var("TMPDIR"))
+            .unwrap_or_default();
+        if !temp.is_empty() {
+            let log_path = std::path::PathBuf::from(&temp).join("deep-desk.log");
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&log_path) {
+                use std::io::Write;
+                let _ = writeln!(f, "{}", msg);
+            }
+        }
+    }};
+}
+
 /// Start the Bun server and wait for it to be ready, then load the webview.
 pub async fn start(app: &AppHandle) {
     let resource_dir = app
@@ -12,7 +30,14 @@ pub async fn start(app: &AppHandle) {
         .resource_dir()
         .unwrap_or_else(|_| std::path::PathBuf::from("."));
 
-    let bun = resource_dir.join(super::BUN_PATH);
+    let bundled = resource_dir.join(super::BUN_PATH);
+    let bun = if bundled.exists() {
+        bundled
+    } else {
+        // Free edition: no bundled runtime, use system bun from PATH
+        log!("[Deep Desk] Bundled bun not found, using system bun");
+        std::path::PathBuf::from("bun")
+    };
 
     // Ensure bun is executable on macOS
     #[cfg(target_os = "macos")]
@@ -33,7 +58,7 @@ pub async fn start(app: &AppHandle) {
     // Find the server script — it's in the resource directory
     let server_script = resource_dir.join("server").join("src").join("server.ts");
 
-    eprintln!("[Deep Desk] Starting server: {:?} run {:?}", bun, server_script);
+    log!("[Deep Desk] Starting server: {:?} run {:?}", bun, server_script);
 
     let _child = match Command::new(&bun)
         .arg("run")
@@ -48,7 +73,7 @@ pub async fn start(app: &AppHandle) {
             *SERVER_PROCESS.lock().unwrap() = Some(c);
         }
         Err(e) => {
-            eprintln!("[Deep Desk] Failed to start server: {e}. Bun path: {:?}", bun);
+            log!("[Deep Desk] Failed to start server: {e}. Bun path: {:?}", bun);
             load_fallback(app);
             return;
         }
@@ -78,7 +103,7 @@ pub async fn start(app: &AppHandle) {
             ));
         }
     } else {
-        eprintln!("[Deep Desk] Server failed to start within {}s", max_wait);
+        log!("[Deep Desk] Server failed to start within {}s", max_wait);
         load_fallback(app);
     }
 }
@@ -100,7 +125,7 @@ fn load_fallback(app: &AppHandle) {
 /// Kill the Bun server process and all its children.
 pub fn kill() {
     if let Some(mut child) = SERVER_PROCESS.lock().unwrap().take() {
-        eprintln!("[Deep Desk] Stopping server...");
+        log!("[Deep Desk] Stopping server...");
         #[cfg(unix)]
         {
             // SIGTERM the process group — propagates to CCB, node, etc.
@@ -129,7 +154,7 @@ pub fn kill() {
         // Fallback force kill (Unix: after SIGTERM grace period; Windows: if taskkill failed)
         let _ = child.kill();
         let _ = child.wait();
-        eprintln!("[Deep Desk] Server stopped.");
+        log!("[Deep Desk] Server stopped.");
     }
 }
 

@@ -35,7 +35,10 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: Deep-Desk-macOS-arm64
-          path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          path: |
+            src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+            src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz
+            src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
 
   windows-x64:
     runs-on: windows-latest
@@ -63,6 +66,15 @@ jobs:
         run: |
           mkdir -p src-tauri/binaries/git
           cp -r "C:/Program Files/Git/"* src-tauri/binaries/git/
+          # Keep only what bash/git need: bin, cmd, usr/bin, mingw64/bin, etc/ (for gitconfig)
+          rm -rf src-tauri/binaries/git/share
+          rm -rf src-tauri/binaries/git/lib
+          rm -rf src-tauri/binaries/git/libexec
+          rm -rf src-tauri/binaries/git/doc
+          rm -rf src-tauri/binaries/git/locale
+          rm -rf src-tauri/binaries/git/ssl
+          rm -rf src-tauri/binaries/git/tmp
+          rm -f src-tauri/binaries/git/.gitignore src-tauri/binaries/git/README* src-tauri/binaries/git/LICENSE*
           ls src-tauri/binaries/git/usr/bin/bash.exe && echo "bash OK"
       - uses: tauri-apps/tauri-action@v0
         env:
@@ -76,6 +88,8 @@ jobs:
           path: |
             src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
             src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi.sig
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe.sig
 
   release:
     needs: [macos-aarch64, windows-x64]
@@ -102,8 +116,34 @@ jobs:
           if [ -n "$WIN_FILE" ]; then
             EXT="${WIN_FILE##*.}"
             ~/.local/bin/ossutil cp "$WIN_FILE" "oss://ccb-store/deepdesk/Deep-Desk-setup.${EXT}" -f
+            # Upload Windows .sig for Tauri updater
+            WIN_SIG=$(find artifacts/Deep-Desk-Windows-x64 -name "*.${EXT}.sig" | head -1)
+            if [ -n "$WIN_SIG" ]; then
+              ~/.local/bin/ossutil cp "$WIN_SIG" "oss://ccb-store/deepdesk/Deep-Desk-${VERSION}_x64.${EXT}.sig" -f
+            fi
             echo "{\"version\":\"$VERSION\",\"macUrl\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-latest.dmg\",\"winUrl\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-setup.${EXT}\"}" > v.json
           else
             echo "{\"version\":\"$VERSION\",\"macUrl\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-latest.dmg\",\"winUrl\":\"\"}" > v.json
           fi
           ~/.local/bin/ossutil cp v.json oss://ccb-store/deepdesk/version.json -f
+          # Auto-update: upload versioned mac app.tar.gz + .sig
+          MAC_TGZ=$(find artifacts/Deep-Desk-macOS-arm64 -name "*.app.tar.gz" 2>/dev/null | head -1)
+          MAC_SIG=$(find artifacts/Deep-Desk-macOS-arm64 -name "*.app.tar.gz.sig" 2>/dev/null | head -1)
+          if [ -n "$MAC_TGZ" ] && [ -n "$MAC_SIG" ]; then
+            ~/.local/bin/ossutil cp "$MAC_TGZ" "oss://ccb-store/deepdesk/Deep-Desk-${VERSION}_aarch64.app.tar.gz" -f
+            MAC_SIG_CONTENT=$(cat "$MAC_SIG")
+            # Build latest.json with available platforms
+            echo -n "{\"version\":\"$VERSION\",\"notes\":\"Auto-update to v$VERSION\",\"pub_date\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"platforms\":{" > /tmp/latest.json
+            echo -n "\"darwin-aarch64\":{\"signature\":\"$MAC_SIG_CONTENT\",\"url\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-${VERSION}_aarch64.app.tar.gz\"}" >> /tmp/latest.json
+            WIN_SIG=$(find artifacts/Deep-Desk-Windows-x64 -name "*.sig" 2>/dev/null | head -1)
+            WIN_INSTALLER=$(find artifacts/Deep-Desk-Windows-x64 \( -name "*.msi" -o -name "*.exe" \) 2>/dev/null | head -1)
+            if [ -n "$WIN_SIG" ] && [ -n "$WIN_INSTALLER" ]; then
+              W_EXT="${WIN_INSTALLER##*.}"
+              WIN_SIG_CONTENT=$(cat "$WIN_SIG")
+              echo -n ",\"windows-x86_64\":{\"signature\":\"$WIN_SIG_CONTENT\",\"url\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-${VERSION}_x64.${W_EXT}\"}" >> /tmp/latest.json
+              ~/.local/bin/ossutil cp "$WIN_INSTALLER" "oss://ccb-store/deepdesk/Deep-Desk-${VERSION}_x64.${W_EXT}" -f
+            fi
+            echo "}}" >> /tmp/latest.json
+            ~/.local/bin/ossutil cp /tmp/latest.json oss://ccb-store/deepdesk/latest.json -f
+            echo "  ✓ latest.json updated"
+          fi

@@ -280,20 +280,6 @@ export function InputBox({ onSend, onCancel, onCommand, agentMode, agentStatus, 
     }
   };
 
-  const handleDrop = (e: DragEvent) => {
-    e.preventDefault();
-    const files = e.dataTransfer?.files;
-    if (!files) return;
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      if (file.type.startsWith("image/")) {
-        addImage(file);
-      } else {
-        addFile(file);
-      }
-    }
-  };
-
   const handleDragOver = (e: DragEvent) => {
     e.preventDefault();
   };
@@ -455,7 +441,7 @@ export function InputBox({ onSend, onCancel, onCommand, agentMode, agentStatus, 
         </div>
       )}
 
-      <form class="input-box" onSubmit={handleSubmit} onDragOver={handleDragOver} onDrop={handleDrop}>
+      <form class="input-box" onSubmit={handleSubmit} onDragOver={handleDragOver}>
         <textarea
           ref={inputRef}
           class="input-box-textarea"

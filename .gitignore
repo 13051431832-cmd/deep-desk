@@ -7,3 +7,6 @@ rw.*.dmg
 src-tauri/target/
 src-tauri/binaries/bun*
 src-tauri/gen/
+server/bundled-plugins/
+dist/
+launch-server.bat

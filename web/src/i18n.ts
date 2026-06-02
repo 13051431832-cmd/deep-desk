@@ -154,6 +154,16 @@ const translations: Record<string, Record<Lang, string>> = {
 
   // Settings
   "settings.desc":          { zh: "设置 API Key 后无需在终端配置环境变量。", en: "Set API keys without terminal config." },
+  "settings.tabLicense":    { zh: "📜 许可证", en: "📜 License" },
+
+  // License
+  "license.placeholder":    { zh: "输入许可证密钥...", en: "Enter license key..." },
+  "license.activate":       { zh: "激活 Pro", en: "Activate Pro" },
+  "license.activating":     { zh: "激活中...", en: "Activating..." },
+  "license.activated":      { zh: "✓ 已激活 Pro", en: "✓ Pro Activated" },
+  "license.alreadyPro":     { zh: "✓ 已经是 Pro 版本", en: "✓ Already Pro" },
+  "license.error":          { zh: "激活失败", en: "Activation failed" },
+  "license.proBadge":       { zh: "Pro 版：MCP x8 + Skills x200+", en: "Pro: MCP x8 + Skills x200+" },
 };
 
 // ── Public API ───────────────────────────────────────────────────────
