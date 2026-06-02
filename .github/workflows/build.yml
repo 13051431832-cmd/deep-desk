@@ -106,7 +106,7 @@ jobs:
           VERSION="${GITHUB_REF#refs/tags/v}"
           curl -fsSL https://gosspublic.alicdn.com/ossutil/install.sh | bash || true
           mkdir -p ~/.local/bin
-          find /tmp -name ossutil64 -type f -exec cp {} ~/.local/bin/ossutil \; -exec chmod +x ~/.local/bin/ossutil \;
+          find . /tmp -name ossutil64 -type f -exec cp {} ~/.local/bin/ossutil \; 2>/dev/null -exec chmod +x ~/.local/bin/ossutil \;
           ~/.local/bin/ossutil config --access-key-id "$OSS_ACCESS_KEY" --access-key-secret "$OSS_SECRET_KEY" --endpoint oss-cn-hangzhou.aliyuncs.com
           DMG=$(find artifacts/Deep-Desk-macOS-arm64 -name "*.dmg" | head -1)
           [ -n "$DMG" ] && ~/.local/bin/ossutil cp "$DMG" oss://ccb-store/deepdesk/Deep-Desk-latest.dmg -f
