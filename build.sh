@@ -70,6 +70,30 @@ ensure_bun() {
   fi
 }
 
+# ── Notarization ──────────────────────────────────────────────────────
+notarize_dmg() {
+  local dmg_dir="$1"
+  local dmg_file=$(ls "$dmg_dir"/*.dmg 2>/dev/null | head -1)
+  if [ -z "$dmg_file" ]; then
+    echo "  ⚠️ No DMG found for notarization"
+    return 0
+  fi
+  if [ -z "${APPLE_API_KEY:-}" ] || [ -z "${APPLE_API_ISSUER:-}" ] || [ -z "${APPLE_API_KEY_ID:-}" ]; then
+    echo "  ⚠️ Apple notarization env vars not set, skipping notarization"
+    return 0
+  fi
+  echo "  Submitting for notarization: $(basename "$dmg_file")"
+  xcrun notarytool submit "$dmg_file" \
+    --key "$APPLE_API_KEY" \
+    --key-id "$APPLE_API_KEY_ID" \
+    --issuer "$APPLE_API_ISSUER" \
+    --wait \
+    2>&1 | tail -5
+  echo "  Stapling notarization ticket..."
+  xcrun stapler staple "$dmg_file" 2>&1 || echo "  ⚠️ Stapling failed (non-fatal)"
+  echo "  ✓ Notarization complete"
+}
+
 # ── Step 2: Build frontend ──────────────────────────────────────────
 echo "[2/4] Building frontend..."
 cd "$SCRIPT_DIR/web" && bun run build && cd "$SCRIPT_DIR"
@@ -101,6 +125,7 @@ case "$TARGET" in
     ls -lh "$SCRIPT_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/"*.dmg 2>/dev/null || echo "  (DMG in bundle/dmg/)"
     ls -lh "$SCRIPT_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/"*.tar.gz 2>/dev/null || true
     ls -lh "$SCRIPT_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/"*.sig 2>/dev/null || true
+    notarize_dmg "$SCRIPT_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg"
     ;;
   macos-x64)
     ensure_bun "binaries/bun-darwin-x64"
@@ -115,6 +140,7 @@ case "$TARGET" in
     cargo tauri build --target x86_64-apple-darwin 2>&1 | grep -E "(Finished|Error|Bundling)" || true
     echo "  ✓ macOS x64 build complete"
     ls -lh "$SCRIPT_DIR/src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/"*.dmg 2>/dev/null || echo "  (DMG in bundle/dmg/)"
+    notarize_dmg "$SCRIPT_DIR/src-tauri/target/x86_64-apple-darwin/release/bundle/dmg"
     ;;
   macos-free)
     ensure_bun "binaries/bun-darwin-aarch64"
@@ -143,6 +169,7 @@ case "$TARGET" in
     ls -lh "$SCRIPT_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/"*.dmg 2>/dev/null || echo "  (DMG in bundle/dmg/)"
     ls -lh "$SCRIPT_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/"*.tar.gz 2>/dev/null || true
     ls -lh "$SCRIPT_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/"*.sig 2>/dev/null || true
+    notarize_dmg "$SCRIPT_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg"
     ;;
   windows)
     echo "  Windows build requires cross-compilation or Windows host."
