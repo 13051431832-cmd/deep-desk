@@ -105,7 +105,7 @@ jobs:
         run: |
           VERSION="${GITHUB_REF#refs/tags/v}"
           mkdir -p ~/.local/bin
-          curl -fsSL "https://gosspublic.alicdn.com/ossutil/ossutil-linux-amd64.zip" -o /tmp/ossutil.zip
+          curl -fsSL "https://gosspublic.alicdn.com/ossutil/current/ossutil-linux-amd64.zip" -o /tmp/ossutil.zip
           unzip -o /tmp/ossutil.zip -d /tmp/ossutil-extract
           find /tmp/ossutil-extract -name ossutil64 -exec cp {} ~/.local/bin/ossutil \;
           chmod +x ~/.local/bin/ossutil
