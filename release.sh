@@ -33,22 +33,24 @@ if [ "${1:-}" = "--promote" ]; then
   DMG="$SCRIPT_DIR/Deep-Desk-${CURRENT}.dmg"
   echo "  DMG: $DMG ($(du -sh "$DMG" | cut -f1))"
 
-  # Windows: check for CI-built artifacts (Tauri MSI requires Windows host)
-  WIN_MSI=$(ls "$SCRIPT_DIR/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi"/*.msi 2>/dev/null | head -1 || echo "")
-  if [ -n "$WIN_MSI" ] && [ -f "$WIN_MSI" ]; then
-    cp "$WIN_MSI" "$SCRIPT_DIR/Deep-Desk-${CURRENT}-x64.msi"
-    echo "  Windows MSI: $WIN_MSI ($(du -sh "$WIN_MSI" | cut -f1))"
+  # Windows: check OSS for CI-built artifacts (Tauri MSI requires Windows host)
+  WIN_MSI_URL="https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-${CURRENT}_x64.msi"
+  WIN_SIG_URL="https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-${CURRENT}_x64.msi.sig"
+  WIN_ON_OSS=""
+  if curl -sIf "$WIN_MSI_URL" > /dev/null 2>&1; then
+    WIN_ON_OSS="1"
+    echo "  Windows MSI: found on OSS (CI-built)"
   else
-    echo "  (Windows MSI not found — skipping, build via GitHub Actions first)"
+    echo "  (Windows MSI not on OSS — CI build may not have run)"
   fi
   ZIP=""
 
   echo "Promoting v$CURRENT to stable..."
 
   ossutil cp "$DMG" "$CDN_BASE/Deep-Desk-latest.dmg" -f | tail -1
-  if [ -n "$WIN_MSI" ] && [ -f "$WIN_MSI" ]; then
-    ossutil cp "$WIN_MSI" "$CDN_BASE/Deep-Desk-latest.exe" -f | tail -1
-    echo "  ✓ Windows MSI uploaded"
+  if [ -n "$WIN_ON_OSS" ]; then
+    ossutil cp "$CDN_BASE/Deep-Desk-${CURRENT}_x64.msi" "$CDN_BASE/Deep-Desk-latest.exe" -f | tail -1
+    echo "  ✓ Windows MSI promoted to latest"
   else
     echo "  (Windows MSI not available — skipping)"
   fi
@@ -63,11 +65,9 @@ if [ "${1:-}" = "--promote" ]; then
     # Build latest.json with available platforms
     echo -n "{\"version\":\"${CURRENT}\",\"notes\":\"Auto-update to v${CURRENT}\",\"pub_date\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"platforms\":{" > /tmp/latest.json
     echo -n "\"darwin-aarch64\":{\"signature\":\"${MAC_SIG_CONTENT}\",\"url\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-${CURRENT}_aarch64.app.tar.gz\"}" >> /tmp/latest.json
-    # Windows: include if MSI + .sig exist
-    WIN_MSI=$(ls "$SCRIPT_DIR/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi"/*.msi 2>/dev/null | head -1 || echo "")
-    WIN_SIG=$(ls "$SCRIPT_DIR/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi"/*.msi.sig 2>/dev/null | head -1 || echo "")
-    if [ -n "$WIN_MSI" ] && [ -n "$WIN_SIG" ]; then
-      WIN_SIG_CONTENT=$(cat "$WIN_SIG")
+    # Windows: include if OSS has MSI + .sig from CI build
+    if [ -n "$WIN_ON_OSS" ] && curl -sIf "$WIN_SIG_URL" > /dev/null 2>&1; then
+      WIN_SIG_CONTENT=$(curl -s "$WIN_SIG_URL")
       echo -n ",\"windows-x86_64\":{\"signature\":\"${WIN_SIG_CONTENT}\",\"url\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-${CURRENT}_x64.msi\"}" >> /tmp/latest.json
     fi
     echo "}}" >> /tmp/latest.json
@@ -85,7 +85,7 @@ if [ "${1:-}" = "--promote" ]; then
 
   # Update version manifest for auto-update
   WIN_URL=""
-  if [ -n "$WIN_MSI" ]; then
+  if [ -n "$WIN_ON_OSS" ]; then
     WIN_URL="https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-latest.exe"
   fi
   echo "{\"version\":\"$CURRENT\",\"macUrl\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-latest.dmg\",\"winUrl\":\"$WIN_URL\"}" > "$SCRIPT_DIR/version.json"
