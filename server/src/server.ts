@@ -1,14 +1,13 @@
 import { runCCBStream, spawnSession } from "./ccb";
 import type { CCBSession } from "./ccb";
-import type { ServerWebSocket } from "bun";
 import { existsSync, mkdirSync } from "fs";
 import { homedir, tmpdir } from "os";
 import { join, normalize } from "path";
-import { fileURLToPath } from "node:url";
+import { readTextFile, writeFileData, fileExists, deleteFileData, readFileBytes, fileSizeSync, globSync, createFileResponse, moduleDir, serve, spawnProcess, readStreamToText, type ServeWebSocket } from "./runtime";
 
 const PORT = parseInt(process.env.PORT || "3456");
 
-const MODULE_DIR = fileURLToPath(new URL(".", import.meta.url));
+const MODULE_DIR = moduleDir(import.meta);
 const DEV_STATIC = join(MODULE_DIR, "../../web/dist");
 const INSTALLED_STATIC = join(MODULE_DIR, "../web/dist");
 const STATIC_DIR = existsSync(DEV_STATIC) ? DEV_STATIC : INSTALLED_STATIC;
@@ -20,7 +19,7 @@ const CONVERSATIONS_DIR = join(homedir(), ".deepdesk", "conversations");
 const VERSION_FILE = join(MODULE_DIR, "../../VERSION");
 const UPDATE_CHECK_URL = "https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/version.json";
 let CURRENT_VERSION = "0.0.0";
-try { CURRENT_VERSION = (await Bun.file(VERSION_FILE).text()).trim(); } catch { /* use default */ }
+try { CURRENT_VERSION = (await readTextFile(VERSION_FILE)).trim(); } catch { /* use default */ }
 mkdirSync(VISION_UPLOAD_DIR, { recursive: true });
 mkdirSync(CONVERSATIONS_DIR, { recursive: true });
 const DEEPDESK_ENV = join(homedir(), ".deepdesk.env");
@@ -30,23 +29,44 @@ const TOKEN_SERVER = "http://120.55.46.20:8080";
 const MCP_DEFAULTS = join(MODULE_DIR, "mcp-defaults.json");
 const MCP_DEFAULTS_REMOTE = "https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/mcp-defaults.json";
 
-// Copy default MCP config on first run (bundled or remote)
-if (!existsSync(MCP_CONFIG_LOCAL)) {
-  try {
-    const defaults = await Bun.file(MCP_DEFAULTS).text();
-    mkdirSync(join(homedir(), ".claude"), { recursive: true });
-    await Bun.write(MCP_CONFIG_LOCAL, defaults);
-  } catch {
-    // Free edition: download MCP defaults from CDN
-    try {
-      const resp = await fetch(MCP_DEFAULTS_REMOTE, { signal: AbortSignal.timeout(15000) });
-      if (resp.ok) {
-        const defaults = await resp.text();
-        mkdirSync(join(homedir(), ".claude"), { recursive: true });
-        await Bun.write(MCP_CONFIG_LOCAL, defaults);
-      }
-    } catch { /* network unavailable, skip */ }
+// Load persisted API keys from ~/.deepdesk.env on startup.
+// The POST /api/settings handler writes keys here, but they must be loaded
+// into process.env on startup so that CCB processes spawned before the user
+// re-enters settings still pick up previously saved keys.
+try {
+  const envContent = await readTextFile(DEEPDESK_ENV);
+  for (const line of envContent.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eq = trimmed.indexOf("=");
+    if (eq <= 0) continue;
+    const key = trimmed.slice(0, eq).trim();
+    const val = trimmed.slice(eq + 1).trim();
+    if (!process.env[key]) process.env[key] = val;
   }
+} catch { /* file doesn't exist yet */ }
+
+// Copy default MCP config on first run (bundled or remote).
+// Run non-blocking so the HTTP server starts immediately — the Rust health check
+// has a 15s timeout, and CDN fetch can take just as long on slow networks.
+if (!existsSync(MCP_CONFIG_LOCAL)) {
+  (async () => {
+    try {
+      const defaults = await readTextFile(MCP_DEFAULTS);
+      mkdirSync(join(homedir(), ".claude"), { recursive: true });
+      await writeFileData(MCP_CONFIG_LOCAL, defaults);
+    } catch {
+      // Free edition: download MCP defaults from CDN
+      try {
+        const resp = await fetch(MCP_DEFAULTS_REMOTE, { signal: AbortSignal.timeout(15000) });
+        if (resp.ok) {
+          const defaults = await resp.text();
+          mkdirSync(join(homedir(), ".claude"), { recursive: true });
+          await writeFileData(MCP_CONFIG_LOCAL, defaults);
+        }
+      } catch { /* network unavailable, skip */ }
+    }
+  })();
 }
 
 // ── Session management ────────────────────────────────────────────────
@@ -56,7 +76,7 @@ if (!existsSync(MCP_CONFIG_LOCAL)) {
 interface ConvSession {
   session: CCBSession;
   lastUsed: number;
-  sockets: Set<ServerWebSocket<unknown>>;
+  sockets: Set<ServeWebSocket>;
   planMode: boolean;
   bypassPermissions: boolean;
 }
@@ -109,7 +129,7 @@ async function describeImage(imageBuffer: Uint8Array, mimeType: string): Promise
 
 // ── Session helpers ───────────────────────────────────────────────────
 
-function createConvSession(convId: string, ws: ServerWebSocket<unknown>, opts?: { planMode?: boolean; bypassPermissions?: boolean }): ConvSession {
+function createConvSession(convId: string, ws: ServeWebSocket, opts?: { planMode?: boolean; bypassPermissions?: boolean }): ConvSession {
   const cs: ConvSession = {
     session: null as any, lastUsed: Date.now(), sockets: new Set([ws]),
     planMode: opts?.planMode || false,
@@ -136,6 +156,9 @@ function createConvSession(convId: string, ws: ServerWebSocket<unknown>, opts?: 
     onError(error) {
       broadcast(cs, JSON.stringify({ type: "error", message: error }));
     },
+    onStatus(message) {
+      broadcast(cs, JSON.stringify({ type: "agent_status", status: "warming", note: message }));
+    },
   }, { bypassPermissions: cs.bypassPermissions, planMode: cs.planMode });
   cs.session = session;
   return cs;
@@ -155,7 +178,7 @@ function compareVersions(a: string, b: string): number {
 
 // ── HTTP server ───────────────────────────────────────────────────────
 
-Bun.serve({
+serve({
   port: PORT,
   async fetch(req, server) {
     if (server.upgrade(req)) return;
@@ -168,7 +191,8 @@ Bun.serve({
     }
 
     if (url.pathname === "/api/status") {
-      const bunBin = join(homedir(), ".bun", "bin", "bun");
+      const bundledBun = join(MODULE_DIR, "../../binaries", `bun-darwin-${process.arch === "arm64" ? "aarch64" : "x64"}/bun`);
+      const bunBin = existsSync(bundledBun) ? bundledBun : join(homedir(), ".bun", "bin", "bun");
       const ccbScript = join(homedir(), "node_modules", "claude-code-best", "dist", "cli.js");
       const hasKey = !!(process.env.OPENAI_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN || process.env.DEEPSEEK_API_KEY);
       return new Response(JSON.stringify({
@@ -211,7 +235,7 @@ Bun.serve({
     if (url.pathname === "/api/mcp") {
       if (req.method === "GET") {
         try {
-          const raw = await Bun.file(MCP_CONFIG_LOCAL).text();
+          const raw = await readTextFile(MCP_CONFIG_LOCAL);
           const config = JSON.parse(raw);
           const servers: Record<string, any> = {};
           for (const [name, s] of Object.entries(config.mcpServers || {})) {
@@ -223,12 +247,12 @@ Bun.serve({
       if (req.method === "POST") {
         try {
           const body = await req.json() as any;
-          const raw = await Bun.file(MCP_CONFIG_LOCAL).text();
+          const raw = await readTextFile(MCP_CONFIG_LOCAL);
           const config = JSON.parse(raw);
           for (const [name, enabled] of Object.entries(body.toggles || {})) {
             if (config.mcpServers?.[name]) config.mcpServers[name].enabled = enabled;
           }
-          await Bun.write(MCP_CONFIG_LOCAL, JSON.stringify(config, null, 2));
+          await writeFileData(MCP_CONFIG_LOCAL, JSON.stringify(config, null, 2));
           return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
         } catch (err: any) { return new Response(JSON.stringify({ error: err.message }), { status: 500 }); }
       }
@@ -247,7 +271,7 @@ Bun.serve({
         try {
           const body = await req.json() as any;
           let envContent = "";
-          try { envContent = await Bun.file(DEEPDESK_ENV).text(); } catch { /* new file */ }
+          try { envContent = await readTextFile(DEEPDESK_ENV); } catch { /* new file */ }
           const lines = envContent.split("\n").filter(l => l.trim() && !l.trim().startsWith("#"));
           const envMap: Record<string, string> = {};
           for (const line of lines) {
@@ -257,10 +281,41 @@ Bun.serve({
           if (body.deepseekKey) { envMap.DEEPSEEK_API_KEY = body.deepseekKey; envMap.OPENAI_API_KEY = body.deepseekKey; }
           if (body.qwenKey) envMap.QWEN_API_KEY = body.qwenKey;
           const newContent = Object.entries(envMap).map(([k, v]) => `${k}=${v}`).join("\n") + "\n";
-          await Bun.write(DEEPDESK_ENV, newContent);
+          await writeFileData(DEEPDESK_ENV, newContent);
           // Also set in current process so GET reflects immediately
           if (body.deepseekKey) { process.env.DEEPSEEK_API_KEY = body.deepseekKey; process.env.OPENAI_API_KEY = body.deepseekKey; }
           if (body.qwenKey) process.env.QWEN_API_KEY = body.qwenKey;
+
+          // Restart all active CCB sessions so they pick up the new API key.
+          // Each tab's CCB subprocess captures env at spawn time; without a restart
+          // old tabs keep using the old (missing) key indefinitely.
+          for (const [convId, cs] of convSessions) {
+            broadcast(cs, JSON.stringify({ type: "agent_status", status: "restarting", note: "API key updated, restarting session..." }));
+            cs.session.kill();
+            const newSession = spawnSession({
+              onText(text, isPartial) {
+                if (isPartial && text) broadcast(cs, JSON.stringify({ type: "text_delta", content: text, status: "streaming" }));
+              },
+              onPermission(id, tool, message) {
+                broadcast(cs, JSON.stringify({ type: "permission_request", id, tool, message }));
+              },
+              onTool(tool, id, status, detail) {
+                broadcast(cs, JSON.stringify({ type: "tool_event", tool, id, status, detail }));
+              },
+              onThinking(text) {
+                broadcast(cs, JSON.stringify({ type: "thinking_delta", content: text }));
+              },
+              onDone(fullText) {
+                broadcast(cs, JSON.stringify({ type: "text_delta", content: fullText, status: "done" }));
+              },
+              onError(error) {
+                broadcast(cs, JSON.stringify({ type: "error", message: error }));
+              },
+            }, { bypassPermissions: cs.bypassPermissions, planMode: cs.planMode });
+            cs.session = newSession;
+            broadcast(cs, JSON.stringify({ type: "agent_status", status: "on", note: "Session restarted with new API key" }));
+          }
+
           return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
         } catch (err: any) {
           return new Response(JSON.stringify({ error: err.message }), { status: 500 });
@@ -272,13 +327,13 @@ Bun.serve({
     if (url.pathname === "/api/conversations" && req.method === "GET") {
       try {
         const files = Array.from(
-          new Bun.Glob("*.json").scanSync({ cwd: CONVERSATIONS_DIR, absolute: false })
+          globSync("*.json", { cwd: CONVERSATIONS_DIR, absolute: false })
         ).sort();
         const list = [];
         for (const name of files) {
           const id = name.replace(/\.json$/, "");
           try {
-            const raw = await Bun.file(join(CONVERSATIONS_DIR, name)).text();
+            const raw = await readTextFile(join(CONVERSATIONS_DIR, name));
             const data = JSON.parse(raw);
             list.push({
               id,
@@ -303,9 +358,8 @@ Bun.serve({
 
       if (req.method === "GET") {
         try {
-          const file = Bun.file(convPath);
-          if (!(await file.exists())) return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
-          return new Response(file);
+          if (!(await fileExists(convPath))) return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
+          return createFileResponse(convPath);
         } catch (err: any) {
           return new Response(JSON.stringify({ error: err.message }), { status: 500 });
         }
@@ -315,7 +369,7 @@ Bun.serve({
         try {
           const body = await req.json();
           body.updatedAt = Date.now();
-          await Bun.write(convPath, JSON.stringify(body, null, 2));
+          await writeFileData(convPath, JSON.stringify(body, null, 2));
           return new Response(JSON.stringify({ ok: true, id: convId }), {
             headers: { "Content-Type": "application/json" },
           });
@@ -326,7 +380,7 @@ Bun.serve({
 
       if (req.method === "DELETE") {
         try {
-          await Bun.file(convPath).delete?.().catch(() => {});
+          await deleteFileData(convPath).catch(() => {});
           return new Response(JSON.stringify({ ok: true }), {
             headers: { "Content-Type": "application/json" },
           });
@@ -345,7 +399,7 @@ Bun.serve({
                 const safeName = f.name.replace(/[^a-zA-Z0-9._-]/g, "_");
                 const destPath = join(VISION_UPLOAD_DIR, `${ts}-${safeName}`);
                 const buf = new Uint8Array(await f.arrayBuffer());
-                await Bun.write(destPath, buf);
+                await writeFileData(destPath, buf);
                 // Try text extraction; binary files → AI uses Read tool with path
                 let textPreview = "";
                 try {
@@ -366,13 +420,12 @@ Bun.serve({
                 const paths: string[] = body.paths || [];
                 const results = [];
                 for (const p of paths) {
-                  const file = Bun.file(p);
-                  if (!(await file.exists())) { results.push({ path: p, error: "not found" }); continue; }
+                  if (!(await fileExists(p))) { results.push({ path: p, error: "not found" }); continue; }
                   const name = p.split("/").pop() || p.split("\\").pop() || "file";
-                  const size = file.size || 0;
+                  const size = fileSizeSync(p) || 0;
                   let textPreview = "";
                   try {
-                    const buf = await file.bytes();
+                    const buf = await readFileBytes(p);
                     const raw = new TextDecoder("utf-8", { fatal: true }).decode(buf);
                     const printable = raw.replace(/[^\x20-\x7E\x0A\x0D\x09\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]/g, "");
                     if (printable.length > raw.length * 0.7) textPreview = raw.slice(0, 5000);
@@ -389,7 +442,7 @@ Bun.serve({
     	    // ── License API ─────────────────────────────────────────────────
 	    if (url.pathname === "/api/license/status") {
 	      try {
-	        const raw = await Bun.file(LICENSE_FILE).text();
+	        const raw = await readTextFile(LICENSE_FILE);
 	        const lic = JSON.parse(raw);
 	        return new Response(JSON.stringify({ pro: !!lic.pro, package: lic.package || "", activatedAt: lic.activated_at || "" }), {
 	          headers: { "Content-Type": "application/json" },
@@ -430,28 +483,49 @@ Bun.serve({
 	        if (!dlResp.ok) {
 	          return new Response(JSON.stringify({ error: `Download failed (${dlResp.status})` }), { status: 500 });
 	        }
-	        await Bun.write(tmpPath, dlResp);
+	        await writeFileData(tmpPath, dlResp);
 
 	        // 3. Extract to skills dir
 	        mkdirSync(SKILLS_DIR, { recursive: true });
-	        const proc = Bun.spawn(["tar", "xzf", tmpPath, "-C", SKILLS_DIR], {
+	        const proc = spawnProcess("tar", ["xzf", tmpPath, "-C", SKILLS_DIR], {
 	          stdout: "pipe", stderr: "pipe",
 	        });
 	        const [out, err] = await Promise.all([
-	          new Response(proc.stdout).text(),
-	          new Response(proc.stderr).text(),
+	          readStreamToText(proc.stdout),
+	          readStreamToText(proc.stderr),
 	        ]);
 	        const exitCode = await proc.exited;
 	        // Clean up temp file regardless
-	        try { await Bun.file(tmpPath).delete?.(); } catch {}
+	        try { await deleteFileData(tmpPath); } catch {}
 
 	        if (exitCode !== 0) {
 	          return new Response(JSON.stringify({ error: `Extract failed: ${err || out}` }), { status: 500 });
 	        }
 
+	        // 3.5. Merge MCP config if package includes one
+	        const pkgMcpPath = join(SKILLS_DIR, "mcp.json");
+	        if (existsSync(pkgMcpPath)) {
+	          try {
+	            const pkgMcp = JSON.parse(await readTextFile(pkgMcpPath));
+	            const pkgServers = pkgMcp.mcpServers || {};
+	            if (Object.keys(pkgServers).length > 0) {
+	              let existing: any = { mcpServers: {} };
+	              try { existing = JSON.parse(await readTextFile(MCP_CONFIG_LOCAL)); } catch {}
+	              existing.mcpServers = existing.mcpServers || {};
+	              for (const [name, s] of Object.entries(pkgServers)) {
+	                if (!existing.mcpServers[name]) {
+	                  existing.mcpServers[name] = s;
+	                }
+	              }
+	              await writeFileData(MCP_CONFIG_LOCAL, JSON.stringify(existing, null, 2));
+	            }
+	            try { await deleteFileData(pkgMcpPath); } catch {}
+	          } catch { /* non-critical: MCP merge failure shouldn't block activation */ }
+	        }
+
 	        // 4. Persist license state
 	        mkdirSync(join(homedir(), ".deepdesk"), { recursive: true });
-	        await Bun.write(LICENSE_FILE, JSON.stringify({
+	        await writeFileData(LICENSE_FILE, JSON.stringify({
 	          pro: true,
 	          package: redeemData.package_name || pkg,
 	          activated_at: new Date().toISOString(),
@@ -491,12 +565,11 @@ Bun.serve({
     for (const dir of [STATIC_DIR, WEB_SRC]) {
       const fullPath = join(dir, safePath);
       if (!fullPath.startsWith(dir)) continue;
-      const file = Bun.file(fullPath);
-      if (await file.exists()) return new Response(file);
+      
+      if (await fileExists(fullPath)) return createFileResponse(fullPath);
     }
     if (url.pathname === "/") {
-      const file = Bun.file(WEB_INDEX);
-      if (await file.exists()) return new Response(file);
+      if (await fileExists(WEB_INDEX)) return createFileResponse(WEB_INDEX);
     }
     return new Response("Not found", { status: 404 });
   },
@@ -735,5 +808,5 @@ Bun.serve({
 });
 
 console.log(`Deep Desk running at http://localhost:${PORT}`);
-console.log(`  cwd: ${import.meta.dir}`);
+console.log(`  cwd: ${moduleDir(import.meta)}`);
 console.log(`  mcp-config: ${existsSync(MCP_CONFIG_LOCAL) ? "loaded" : "not found"}`);

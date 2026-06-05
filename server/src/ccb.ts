@@ -1,7 +1,7 @@
 import { homedir } from "os";
 import { join } from "path";
 import { fileURLToPath } from "url";
-import type { Subprocess } from "bun";
+import { spawnProcess, spawnSync, type SpawnedProcess } from "./runtime";
 import { existsSync, mkdirSync, cpSync } from "fs";
 
 const home = homedir();
@@ -307,13 +307,14 @@ export function spawnSession(callbacks: {
   onThinking?: ThinkingCallback;
   onDone: DoneCallback;
   onError: ErrorCallback;
+  onStatus?: (message: string) => void;
 }, options?: { bypassPermissions?: boolean; planMode?: boolean }): CCBSession {
   const env = buildEnv();
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
 
   // Mutable references — swapped on restart
-  let proc: Subprocess<"pipe", "pipe", "pipe">;
+  let proc: SpawnedProcess;
   let fullText = "";
   let buffer = "";
   let hasStreamedContent = false;
@@ -329,7 +330,7 @@ export function spawnSession(callbacks: {
   function flushQueue() {
     while (messageQueue.length > 0 && proc && !proc.killed && procReady) {
       const msg = messageQueue.shift()!;
-      try { proc.stdin.write(encoder.encode(msg)); proc.stdin.flush(); }
+      try { proc.stdinWrite(encoder.encode(msg)); proc.stdinFlush(); }
       catch { messageQueue.unshift(msg); break; }
     }
   }
@@ -353,7 +354,7 @@ export function spawnSession(callbacks: {
       hasStreamedContent = false;
       pendingPermissionId = null;
       if (proc && !proc.killed && procReady) {
-        try { proc.stdin.write(encoder.encode(msg)); proc.stdin.flush(); }
+        try { proc.stdinWrite(encoder.encode(msg)); proc.stdinFlush(); }
         catch { messageQueue.push(msg); }
       } else {
         messageQueue.push(msg);
@@ -373,7 +374,7 @@ export function spawnSession(callbacks: {
       fullText = "";
       hasStreamedContent = false;
       if (proc && !proc.killed && procReady) {
-        try { proc.stdin.write(encoder.encode(decision)); proc.stdin.flush(); }
+        try { proc.stdinWrite(encoder.encode(decision)); proc.stdinFlush(); }
         catch { messageQueue.push(decision); }
       }
     },
@@ -400,10 +401,10 @@ export function spawnSession(callbacks: {
       return false;
     }
     if (!existsSync(CCB_SCRIPT)) {
-      callbacks.onError("Installing AI engine (one-time setup, ~30s)...");
+      callbacks.onStatus?.("Installing AI engine (one-time setup, ~30s)...");
       try {
         mkdirSync(home, { recursive: true });
-        const result = Bun.spawnSync([BUN_BIN, "install", "claude-code-best"], {
+        const result = spawnSync(BUN_BIN, ["install", "claude-code-best"], {
           cwd: home, env: process.env as Record<string, string>,
           stdout: "pipe", stderr: "pipe",
         });
@@ -413,7 +414,7 @@ export function spawnSession(callbacks: {
           callbacks.onError(`Engine install failed (exit=${result.exitCode})\nstderr: ${stderr || "(empty)"}\nstdout: ${stdout || "(empty)"}`);
           return false;
         }
-        callbacks.onError("Engine installed. Starting...");
+        callbacks.onStatus?.("Engine installed. Starting...");
       } catch (e: any) {
         callbacks.onError(`Engine install error: ${e.message}`);
         return false;
@@ -424,13 +425,13 @@ export function spawnSession(callbacks: {
     // Free edition: git clone from GitHub
     const pluginCacheDir = join(home, ".claude", "plugins", "cache", "claude-plugins-official");
     if (!existsSync(pluginCacheDir)) {
-      callbacks.onError("Installing Pro skills (~200 skills, one-time)...");
+      callbacks.onStatus?.("Installing Pro skills (~200 skills, one-time)...");
       try {
         mkdirSync(join(home, ".claude", "plugins", "cache"), { recursive: true });
         if (existsSync(BUNDLED_PLUGINS)) {
           cpSync(BUNDLED_PLUGINS, pluginCacheDir, { recursive: true });
         } else {
-          const clone = Bun.spawnSync(["git", "clone", "--depth", "1", "https://github.com/anthropics/claude-plugins-official.git", pluginCacheDir], {
+          const clone = spawnSync("git", ["clone", "--depth", "1", "https://github.com/anthropics/claude-plugins-official.git", pluginCacheDir], {
             cwd: home, env: process.env as Record<string, string>,
             stdout: "pipe", stderr: "pipe",
           });
@@ -439,7 +440,7 @@ export function spawnSession(callbacks: {
             return true;
           }
         }
-        callbacks.onError("Pro skills ready. Starting agent...");
+        callbacks.onStatus?.("Pro skills ready. Starting agent...");
       } catch { callbacks.onError("Skills install skipped. Starting agent..."); }
     }
     return true;
@@ -462,10 +463,10 @@ export function spawnSession(callbacks: {
     if (existsSync(MCP_CONFIG)) args.push("--mcp-config", MCP_CONFIG);
 
     try {
-      proc = Bun.spawn([BUN_BIN, CCB_SCRIPT, ...args], {
+      proc = spawnProcess(BUN_BIN, [CCB_SCRIPT, ...args], {
         cwd: CWD, env,
         stdin: "pipe", stdout: "pipe", stderr: "pipe",
-      }) as Subprocess<"pipe", "pipe", "pipe">;
+      });
     } catch (err: any) {
       if (restartCount < MAX_RESTARTS) {
         restartCount++;
@@ -596,11 +597,11 @@ export function runCCBStream(
     args.push(message);
     if (existsSync(MCP_CONFIG)) args.push("--mcp-config", MCP_CONFIG);
 
-    const proc = Bun.spawn([BUN_BIN, CCB_SCRIPT, ...args], {
+    const proc = spawnProcess(BUN_BIN, [CCB_SCRIPT, ...args], {
       cwd: CWD, env,
       stdin: "pipe", stdout: "pipe", stderr: "pipe",
-    }) as Subprocess<"pipe", "pipe", "pipe">;
-    proc.stdin.end();
+    });
+    proc.stdinEnd();
 
     const bufRef = { val: "" };
     const ftRef = { val: "" };

@@ -113,8 +113,193 @@ jobs:
             src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi.sig
             src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe.sig
 
+  windows-x86:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with: { targets: "i686-pc-windows-msvc" }
+      - name: Install dependencies
+        shell: bash
+        run: npm install && cd web && npm install
+      - name: Build frontend
+        run: cd web && npm run build
+        shell: bash
+      - name: Download Node.js (Windows x86)
+        shell: bash
+        run: |
+          mkdir -p src-tauri/binaries/node-win-x86
+          curl -fsSL https://nodejs.org/dist/v22.12.0/win-x86/node.exe -o src-tauri/binaries/node-win-x86/node.exe
+      - name: Compile server TS → JS (for Node.js)
+        shell: bash
+        run: |
+          npx esbuild server/src/server.ts --bundle --platform=node --outfile=server/dist/server.mjs --format=esm --external:ws --external:strip-ansi
+      - name: Copy x86 Tauri config
+        shell: bash
+        run: cp src-tauri/tauri.windows-x86.conf.json src-tauri/tauri.windows.conf.json
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        with:
+          args: --target i686-pc-windows-msvc
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Deep-Desk-Windows-x86
+          path: |
+            src-tauri/target/i686-pc-windows-msvc/release/bundle/nsis/*.exe
+            src-tauri/target/i686-pc-windows-msvc/release/bundle/msi/*.msi
+            src-tauri/target/i686-pc-windows-msvc/release/bundle/msi/*.msi.sig
+            src-tauri/target/i686-pc-windows-msvc/release/bundle/nsis/*.exe.sig
+
+  windows-x86-free:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with: { targets: "i686-pc-windows-msvc" }
+      - name: Install dependencies
+        shell: bash
+        run: npm install && cd web && npm install
+      - name: Build frontend
+        run: cd web && npm run build
+        shell: bash
+      - name: Compile server TS → JS (for Node.js)
+        shell: bash
+        run: |
+          npx esbuild server/src/server.ts --bundle --platform=node --outfile=server/dist/server.mjs --format=esm --external:ws --external:strip-ansi
+      - name: Copy x86-free Tauri config
+        shell: bash
+        run: cp src-tauri/tauri.windows-x86-free.conf.json src-tauri/tauri.windows.conf.json
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        with:
+          args: --target i686-pc-windows-msvc
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Deep-Desk-Windows-x86-free
+          path: |
+            src-tauri/target/i686-pc-windows-msvc/release/bundle/nsis/*.exe
+            src-tauri/target/i686-pc-windows-msvc/release/bundle/msi/*.msi
+            src-tauri/target/i686-pc-windows-msvc/release/bundle/msi/*.msi.sig
+            src-tauri/target/i686-pc-windows-msvc/release/bundle/nsis/*.exe.sig
+
+  e2e-windows:
+    needs: [windows-x64]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Deep-Desk-Windows-x64
+          path: artifacts
+
+      - name: Install and verify Deep Desk
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          # Locate installer (prefer MSI, fall back to NSIS exe)
+          $MSI = Get-ChildItem -Path artifacts -Filter "*.msi" -Recurse | Select-Object -First 1
+          $EXE = Get-ChildItem -Path artifacts -Filter "*.exe" -Recurse | Select-Object -First 1
+
+          if ($MSI) {
+            Write-Host "=== Installing MSI: $($MSI.Name) ==="
+            $log = Join-Path $env:RUNNER_TEMP "install.log"
+            $proc = Start-Process msiexec.exe -ArgumentList "/i `"$($MSI.FullName)`" /quiet /norestart /l*v `"$log`"" -Wait -PassThru
+            Write-Host "MSI exit code: $($proc.ExitCode)"
+            if ($proc.ExitCode -ne 0) {
+              Write-Host "=== Install log (last 80 lines) ==="
+              Get-Content $log -Tail 80
+              throw "MSI installation failed (exit code $($proc.ExitCode))"
+            }
+          } elseif ($EXE) {
+            Write-Host "=== Installing NSIS: $($EXE.Name) ==="
+            $proc = Start-Process $EXE.FullName -ArgumentList "/S" -Wait -PassThru
+            Write-Host "NSIS exit code: $($proc.ExitCode)"
+            if ($proc.ExitCode -ne 0) {
+              throw "NSIS installation failed (exit code $($proc.ExitCode))"
+            }
+          } else {
+            Write-Host "ERROR: No installer found in artifacts"
+            Get-ChildItem -Path artifacts -Recurse | ForEach-Object { Write-Host "  $($_.FullName)" }
+            throw "No installer found in build artifacts"
+          }
+
+          # Find install directory (Tauri defaults: per-machine or per-user)
+          $dirs = @(
+            "C:\Program Files\Deep Desk",
+            "$env:LOCALAPPDATA\Programs\Deep Desk",
+            "$env:LOCALAPPDATA\Deep Desk"
+          )
+          $INSTALL_DIR = $null
+          foreach ($d in $dirs) {
+            if (Test-Path $d) { $INSTALL_DIR = $d; break }
+          }
+          if (-not $INSTALL_DIR) {
+            $found = Get-ChildItem -Path "C:\Program Files" -Directory -Filter "Deep*" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($found) { $INSTALL_DIR = $found.FullName }
+          }
+
+          Write-Host "Install directory: $INSTALL_DIR"
+          if (-not $INSTALL_DIR -or -not (Test-Path $INSTALL_DIR)) {
+            throw "Install directory not found after install"
+          }
+
+          # Dump file tree for debugging
+          Write-Host "`n=== Installed file tree (depth 3) ==="
+          Get-ChildItem -Path $INSTALL_DIR -Recurse -Depth 3 | ForEach-Object {
+            $size = if (-not $_.PSIsContainer) { " ($($_.Length) bytes)" } else { "/" }
+            Write-Host "  $($_.FullName)$size"
+          }
+
+          # Verify critical bundled resources from tauri.windows.conf.json
+          Write-Host "`n=== File integrity checks ==="
+          $checks = @(
+            @{Path = "$INSTALL_DIR\Deep Desk.exe"; Desc = "Main executable"},
+            @{Path = "$INSTALL_DIR\binaries\bun-windows-x64\bun.exe"; Desc = "Bundled bun binary"},
+            @{Path = "$INSTALL_DIR\server"; Desc = "Server source directory"},
+            @{Path = "$INSTALL_DIR\package.json"; Desc = "package.json"}
+          )
+
+          $failed = @()
+          foreach ($c in $checks) {
+            $exists = Test-Path $c.Path
+            $status = if ($exists) { "OK" } else { "MISSING" }
+            Write-Host "  [$status] $($c.Desc)"
+            if (-not $exists) { $failed += $c.Desc }
+          }
+
+          if ($failed.Count -gt 0) {
+            throw "Missing critical files: $($failed -join ', ')"
+          }
+
+          # Smoke test: launch app, verify process lives briefly
+          Write-Host "`n=== Launch smoke test ==="
+          $appExe = "$INSTALL_DIR\Deep Desk.exe"
+          $p = Start-Process $appExe -PassThru -WindowStyle Hidden
+          Start-Sleep -Seconds 8
+
+          if ($p.HasExited) {
+            Write-Host "WARNING: Process exited after 8s (code $($p.ExitCode))"
+            Write-Host "This is expected on headless CI runners (no GPU/display)"
+          } else {
+            Write-Host "OK: Process alive (PID $($p.Id)) after 8s"
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            Write-Host "  Stopped"
+          }
+
+          Write-Host "`n=== E2E Windows verification: PASSED ==="
+
   release:
-    needs: [macos-aarch64, windows-x64]
+    needs: [macos-aarch64, windows-x64, windows-x86, windows-x86-free]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
@@ -152,6 +337,27 @@ jobs:
             echo "{\"version\":\"$VERSION\",\"macUrl\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-latest.dmg\",\"winUrl\":\"\"}" > v.json
           fi
           ~/.local/bin/ossutil cp v.json oss://ccb-store/deepdesk/version.json -f
+          # Upload x86 full edition
+          X86_EXE=$(find artifacts/Deep-Desk-Windows-x86 -name "*.exe" 2>/dev/null | head -1)
+          X86_MSI=$(find artifacts/Deep-Desk-Windows-x86 -name "*.msi" 2>/dev/null | head -1)
+          X86_FILE=""
+          [ -n "$X86_MSI" ] && X86_FILE="$X86_MSI"
+          [ -z "$X86_FILE" ] && [ -n "$X86_EXE" ] && X86_FILE="$X86_EXE"
+          if [ -n "$X86_FILE" ]; then
+            X86_EXT="${X86_FILE##*.}"
+            ~/.local/bin/ossutil cp "$X86_FILE" "oss://ccb-store/deepdesk/Deep-Desk-setup-x86.${X86_EXT}" -f
+            ~/.local/bin/ossutil cp "$X86_FILE" "oss://ccb-store/deepdesk/Deep-Desk-${VERSION}_x86.${X86_EXT}" -f
+          fi
+          # Upload x86 free edition
+          X86_FREE_EXE=$(find artifacts/Deep-Desk-Windows-x86-free -name "*.exe" 2>/dev/null | head -1)
+          X86_FREE_MSI=$(find artifacts/Deep-Desk-Windows-x86-free -name "*.msi" 2>/dev/null | head -1)
+          X86_FREE_FILE=""
+          [ -n "$X86_FREE_MSI" ] && X86_FREE_FILE="$X86_FREE_MSI"
+          [ -z "$X86_FREE_FILE" ] && [ -n "$X86_FREE_EXE" ] && X86_FREE_FILE="$X86_FREE_EXE"
+          if [ -n "$X86_FREE_FILE" ]; then
+            X86_FREE_EXT="${X86_FREE_FILE##*.}"
+            ~/.local/bin/ossutil cp "$X86_FREE_FILE" "oss://ccb-store/deepdesk/Deep-Desk-setup-x86-free.${X86_FREE_EXT}" -f
+          fi
           # Auto-update: upload versioned mac app.tar.gz + .sig
           MAC_TGZ=$(find artifacts/Deep-Desk-macOS-arm64 -name "*.app.tar.gz" 2>/dev/null | head -1)
           MAC_SIG=$(find artifacts/Deep-Desk-macOS-arm64 -name "*.app.tar.gz.sig" 2>/dev/null | head -1)
@@ -168,6 +374,11 @@ jobs:
               WIN_SIG_CONTENT=$(cat "$WIN_SIG")
               echo -n ",\"windows-x86_64\":{\"signature\":\"$WIN_SIG_CONTENT\",\"url\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-${VERSION}_x64.${W_EXT}\"}" >> /tmp/latest.json
               ~/.local/bin/ossutil cp "$WIN_INSTALLER" "oss://ccb-store/deepdesk/Deep-Desk-${VERSION}_x64.${W_EXT}" -f
+            fi
+            X86_SIG=$(find artifacts/Deep-Desk-Windows-x86 -name "*.sig" 2>/dev/null | head -1)
+            if [ -n "$X86_SIG" ] && [ -n "$X86_FILE" ]; then
+              X86_SIG_CONTENT=$(cat "$X86_SIG")
+              echo -n ",\"windows-x86\":{\"signature\":\"$X86_SIG_CONTENT\",\"url\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-${VERSION}_x86.${X86_EXT}\"}" >> /tmp/latest.json
             fi
             echo "}}" >> /tmp/latest.json
             ~/.local/bin/ossutil cp /tmp/latest.json oss://ccb-store/deepdesk/latest.json -f

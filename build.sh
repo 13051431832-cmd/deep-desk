@@ -70,6 +70,21 @@ ensure_bun() {
   fi
 }
 
+# ── Ad-hoc signing fallback ──────────────────────────────────────────
+# When APPLE_SIGNING_IDENTITY is set (real certificate), use it as-is.
+# When NOT set, default to "-" (ad-hoc signing) so the .app always has
+# a valid code signature. Without notarization users will need to
+# right-click → Open on first launch, but the app won't be rejected as
+# "damaged" by Gatekeeper on macOS 10.15+.
+ensure_signing_identity() {
+  if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
+    export APPLE_SIGNING_IDENTITY="-"
+    echo "  Using ad-hoc signing (no Apple Developer certificate)"
+  else
+    echo "  Using signing identity: $APPLE_SIGNING_IDENTITY"
+  fi
+}
+
 # ── Notarization ──────────────────────────────────────────────────────
 notarize_dmg() {
   local dmg_dir="$1"
@@ -115,11 +130,13 @@ case "$TARGET" in
       mkdir -p "$(dirname "$PLUGINS_DIR")"
       git clone --depth 1 https://github.com/anthropics/claude-plugins-official.git "$PLUGINS_DIR" 2>/dev/null || echo "  ⚠️ Failed to clone plugins repo (build will continue without bundled skills)"
     fi
+    rm -rf "$PLUGINS_DIR/.git" 2>/dev/null || true
     KEY_PATH="${HOME}/.deepdesk-updater-key"
     if [ -f "$KEY_PATH" ]; then
       export TAURI_SIGNING_PRIVATE_KEY="$(cat "$KEY_PATH")"
       export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
     fi
+    ensure_signing_identity
     cargo tauri build --target aarch64-apple-darwin 2>&1 | grep -E "(Finished|Error|Bundling|update)" || true
     echo "  ✓ macOS arm64 build complete"
     ls -lh "$SCRIPT_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/"*.dmg 2>/dev/null || echo "  (DMG in bundle/dmg/)"
@@ -137,6 +154,8 @@ case "$TARGET" in
       mkdir -p "$(dirname "$PLUGINS_DIR")"
       git clone --depth 1 https://github.com/anthropics/claude-plugins-official.git "$PLUGINS_DIR" 2>/dev/null || echo "  ⚠️ Failed to clone plugins repo (build will continue without bundled skills)"
     fi
+    rm -rf "$PLUGINS_DIR/.git" 2>/dev/null || true
+    ensure_signing_identity
     cargo tauri build --target x86_64-apple-darwin 2>&1 | grep -E "(Finished|Error|Bundling)" || true
     echo "  ✓ macOS x64 build complete"
     ls -lh "$SCRIPT_DIR/src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/"*.dmg 2>/dev/null || echo "  (DMG in bundle/dmg/)"
@@ -164,6 +183,7 @@ case "$TARGET" in
       export TAURI_SIGNING_PRIVATE_KEY="$(cat "$KEY_PATH")"
       export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
     fi
+    ensure_signing_identity
     cargo tauri build --target aarch64-apple-darwin 2>&1 | grep -E "(Finished|Error|Bundling|update)" || true
     echo "  ✓ macOS free edition build complete"
     ls -lh "$SCRIPT_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/"*.dmg 2>/dev/null || echo "  (DMG in bundle/dmg/)"

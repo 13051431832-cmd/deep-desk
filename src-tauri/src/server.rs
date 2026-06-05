@@ -34,9 +34,17 @@ pub async fn start(app: &AppHandle) {
     let bun = if bundled.exists() {
         bundled
     } else {
-        // Free edition: no bundled runtime, use system bun from PATH
-        log!("[Deep Desk] Bundled bun not found, using system bun");
-        std::path::PathBuf::from("bun")
+        // Free edition: no bundled runtime, use system runtime from PATH
+        #[cfg(all(target_os = "windows", target_arch = "x86"))]
+        {
+            log!("[Deep Desk] Bundled node not found, using system node");
+            std::path::PathBuf::from("node")
+        }
+        #[cfg(not(all(target_os = "windows", target_arch = "x86")))]
+        {
+            log!("[Deep Desk] Bundled bun not found, using system bun");
+            std::path::PathBuf::from("bun")
+        }
     };
 
     // Ensure bun is executable on macOS
@@ -56,13 +64,19 @@ pub async fn start(app: &AppHandle) {
     let env = load_env();
 
     // Find the server script — it's in the resource directory
+    #[cfg(all(target_os = "windows", target_arch = "x86"))]
+    let server_script = resource_dir.join("server").join("dist").join("server.mjs");
+    #[cfg(not(all(target_os = "windows", target_arch = "x86")))]
     let server_script = resource_dir.join("server").join("src").join("server.ts");
 
     log!("[Deep Desk] Starting server: {:?} run {:?}", bun, server_script);
 
-    let _child = match Command::new(&bun)
-        .arg("run")
-        .arg(&server_script)
+    let mut cmd = Command::new(&bun);
+    #[cfg(not(all(target_os = "windows", target_arch = "x86")))]
+    cmd.arg("run");
+    cmd.arg(&server_script);
+
+    let _child = match cmd
         .current_dir(&resource_dir)
         .envs(&env)
         .env("NO_COLOR", "1")
