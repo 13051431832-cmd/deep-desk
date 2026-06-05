@@ -42,7 +42,7 @@ jobs:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
       - name: Write Apple API key to file
-        run: echo "$APPLE_API_KEY" | base64 -d -o /tmp/apple-api-key.p8
+        run: echo "$APPLE_API_KEY" > /tmp/apple-api-key.p8
         env:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
       - uses: tauri-apps/tauri-action@v0
@@ -102,7 +102,7 @@ jobs:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
       - name: Write Apple API key to file
-        run: echo "$APPLE_API_KEY" | base64 -d -o /tmp/apple-api-key.p8
+        run: echo "$APPLE_API_KEY" > /tmp/apple-api-key.p8
         env:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
       - uses: tauri-apps/tauri-action@v0
@@ -155,7 +155,7 @@ jobs:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
       - name: Write Apple API key to file
-        run: echo "$APPLE_API_KEY" | base64 -d -o /tmp/apple-api-key.p8
+        run: echo "$APPLE_API_KEY" > /tmp/apple-api-key.p8
         env:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
       - uses: tauri-apps/tauri-action@v0
@@ -215,7 +215,7 @@ jobs:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
       - name: Write Apple API key to file
-        run: echo "$APPLE_API_KEY" | base64 -d -o /tmp/apple-api-key.p8
+        run: echo "$APPLE_API_KEY" > /tmp/apple-api-key.p8
         env:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
       - uses: tauri-apps/tauri-action@v0
