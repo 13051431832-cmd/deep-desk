@@ -26,6 +26,19 @@ jobs:
           unzip -o /tmp/b.zip -d /tmp/bun-mac/
           mv /tmp/bun-mac/bun-darwin-aarch64/bun src-tauri/binaries/bun-darwin-aarch64/bun
           chmod +x src-tauri/binaries/bun-darwin-aarch64/bun
+      - name: Verify Apple certificate
+        run: |
+          echo "Base64 length: $(echo "$APPLE_CERTIFICATE" | wc -c)"
+          echo "Base64 lines: $(echo "$APPLE_CERTIFICATE" | wc -l)"
+          echo "$APPLE_CERTIFICATE" | base64 -d -o /tmp/cert.p12 2>&1 || echo "base64 decode failed"
+          ls -la /tmp/cert.p12 2>/dev/null || echo "cert file missing"
+          file /tmp/cert.p12 2>/dev/null || true
+          echo "Password length: ${#APPLE_CERTIFICATE_PASSWORD}"
+          echo "Password hex: $(echo -n "$APPLE_CERTIFICATE_PASSWORD" | xxd | head -5)"
+          security import /tmp/cert.p12 -k /tmp/test.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign 2>&1 || true
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
