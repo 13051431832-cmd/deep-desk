@@ -562,19 +562,46 @@ export function sendMessage(convId: string, text: string) {
   );
   saveSessions();
 
-  // Try to send via WebSocket, reconnect if needed
-  if (conv.ws && conv.ws.readyState === WebSocket.OPEN) {
-    conv.ws.send(JSON.stringify({ type: "user_message", content: text }));
+  const port = parseInt(location.port) || 3456;
+
+  const doSendViaWS = () => {
+    const c = conversations.value.find((c1) => c1.id === convId);
+    if (!c) return;
+    if (c.ws && c.ws.readyState === WebSocket.OPEN) {
+      c.ws.send(JSON.stringify({ type: "user_message", content: text }));
+    } else {
+      updateConv(convId, { connected: false, status: "Reconnecting..." });
+      connectConversation(convId, port);
+      setTimeout(() => {
+        const c2 = conversations.value.find((c1) => c1.id === convId);
+        if (c2?.ws && c2.ws.readyState === WebSocket.OPEN) {
+          c2.ws.send(JSON.stringify({ type: "user_message", content: text }));
+        }
+      }, 2000);
+    }
+  };
+
+  // Fast mode: auto-install CCB if engine not present
+  if (!conv.agentMode) {
+    fetch("/api/status")
+      .then(r => r.json())
+      .then(s => {
+        if (!s.ccb || !s.bun) {
+          updateConv(convId, { status: "Installing AI engine (one-time)..." });
+          startAgent(convId, port);
+          setTimeout(() => {
+            const c3 = conversations.value.find((c1) => c1.id === convId);
+            if (c3?.ws && c3.ws.readyState === WebSocket.OPEN) {
+              c3.ws.send(JSON.stringify({ type: "user_message", content: text }));
+            }
+          }, 5000);
+        } else {
+          doSendViaWS();
+        }
+      })
+      .catch(() => doSendViaWS());
   } else {
-    // Retry connecting, then queue the message
-    updateConv(convId, { connected: false, status: "Reconnecting..." });
-    connectConversation(convId, parseInt(location.port) || 3456);
-    setTimeout(() => {
-      const c = conversations.value.find((c1) => c1.id === convId);
-      if (c?.ws && c.ws.readyState === WebSocket.OPEN) {
-        c.ws.send(JSON.stringify({ type: "user_message", content: text }));
-      }
-    }, 2000);
+    doSendViaWS();
   }
 }
 

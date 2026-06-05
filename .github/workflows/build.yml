@@ -62,6 +62,115 @@ jobs:
             src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz
             src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
 
+  macos-x64:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: latest }
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with: { targets: "x86_64-apple-darwin" }
+      - name: Install dependencies
+        run: bun install && cd web && bun install
+      - name: Build frontend
+        run: cd web && bun run build
+      - name: Download Bun (macOS x64)
+        run: |
+          mkdir -p src-tauri/binaries/bun-darwin-x64
+          curl -fsSL https://github.com/oven-sh/bun/releases/latest/download/bun-darwin-x64.zip -o /tmp/b.zip
+          unzip -o /tmp/b.zip -d /tmp/bun-mac/
+          mv /tmp/bun-mac/bun-darwin-x64/bun src-tauri/binaries/bun-darwin-x64/bun
+          chmod +x src-tauri/binaries/bun-darwin-x64/bun
+      - name: Copy x64 Tauri config
+        run: cp src-tauri/tauri.macos-x64.conf.json src-tauri/tauri.macos.conf.json
+      - name: Import Apple code signing certificate
+        if: env.APPLE_CERTIFICATE != ''
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN="build.keychain"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security default-keychain -s "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > /tmp/cert.p12
+          security import /tmp/cert.p12 -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          rm /tmp/cert.p12
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          args: --target x86_64-apple-darwin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Deep-Desk-macOS-x64
+          path: |
+            src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
+            src-tauri/target/x86_64-apple-darwin/release/bundle/macos/*.app.tar.gz
+            src-tauri/target/x86_64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
+
+  macos-aarch64-free:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: latest }
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with: { targets: "aarch64-apple-darwin" }
+      - name: Install dependencies
+        run: bun install && cd web && bun install
+      - name: Build frontend
+        run: cd web && bun run build
+      - name: Copy free Tauri config
+        run: cp src-tauri/tauri.macos-aarch64-free.conf.json src-tauri/tauri.macos.conf.json
+      - name: Import Apple code signing certificate
+        if: env.APPLE_CERTIFICATE != ''
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN="build.keychain"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security default-keychain -s "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > /tmp/cert.p12
+          security import /tmp/cert.p12 -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          rm /tmp/cert.p12
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          args: --target aarch64-apple-darwin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Deep-Desk-macOS-arm64-free
+          path: |
+            src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+            src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz
+            src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
+
   windows-x64:
     runs-on: windows-latest
     steps:
@@ -299,7 +408,7 @@ jobs:
           Write-Host "`n=== E2E Windows verification: PASSED ==="
 
   release:
-    needs: [macos-aarch64, windows-x64, windows-x86, windows-x86-free]
+    needs: [macos-aarch64, macos-x64, macos-aarch64-free, windows-x64, windows-x86, windows-x86-free]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
@@ -319,6 +428,10 @@ jobs:
           ~/.local/bin/ossutil config --access-key-id "$OSS_ACCESS_KEY" --access-key-secret "$OSS_SECRET_KEY" --endpoint oss-cn-hangzhou.aliyuncs.com
           DMG=$(find artifacts/Deep-Desk-macOS-arm64 -name "*.dmg" | head -1)
           [ -n "$DMG" ] && ~/.local/bin/ossutil cp "$DMG" oss://ccb-store/deepdesk/Deep-Desk-latest.dmg -f
+          DMG_X64=$(find artifacts/Deep-Desk-macOS-x64 -name "*.dmg" | head -1)
+          [ -n "$DMG_X64" ] && ~/.local/bin/ossutil cp "$DMG_X64" oss://ccb-store/deepdesk/Deep-Desk-latest-x64.dmg -f
+          DMG_FREE=$(find artifacts/Deep-Desk-macOS-arm64-free -name "*.dmg" | head -1)
+          [ -n "$DMG_FREE" ] && ~/.local/bin/ossutil cp "$DMG_FREE" oss://ccb-store/deepdesk/Deep-Desk-latest-free.dmg -f
           EXE=$(find artifacts/Deep-Desk-Windows-x64 -name "*.exe" | head -1)
           MSI=$(find artifacts/Deep-Desk-Windows-x64 -name "*.msi" | head -1)
           WIN_FILE=""
@@ -332,9 +445,9 @@ jobs:
             if [ -n "$WIN_SIG" ]; then
               ~/.local/bin/ossutil cp "$WIN_SIG" "oss://ccb-store/deepdesk/Deep-Desk-${VERSION}_x64.${EXT}.sig" -f
             fi
-            echo "{\"version\":\"$VERSION\",\"macUrl\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-latest.dmg\",\"winUrl\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-setup.${EXT}\"}" > v.json
+            echo "{\"version\":\"$VERSION\",\"macUrl\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-latest.dmg\",\"macX64Url\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-latest-x64.dmg\",\"macFreeUrl\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-latest-free.dmg\",\"winUrl\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-setup.${EXT}\"}" > v.json
           else
-            echo "{\"version\":\"$VERSION\",\"macUrl\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-latest.dmg\",\"winUrl\":\"\"}" > v.json
+            echo "{\"version\":\"$VERSION\",\"macUrl\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-latest.dmg\",\"macX64Url\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-latest-x64.dmg\",\"macFreeUrl\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-latest-free.dmg\",\"winUrl\":\"\"}" > v.json
           fi
           ~/.local/bin/ossutil cp v.json oss://ccb-store/deepdesk/version.json -f
           # Upload x86 full edition
@@ -367,6 +480,22 @@ jobs:
             # Build latest.json with available platforms
             echo -n "{\"version\":\"$VERSION\",\"notes\":\"Auto-update to v$VERSION\",\"pub_date\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"platforms\":{" > /tmp/latest.json
             echo -n "\"darwin-aarch64\":{\"signature\":\"$MAC_SIG_CONTENT\",\"url\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-${VERSION}_aarch64.app.tar.gz\"}" >> /tmp/latest.json
+            # macOS x64 auto-update
+            MAC_X64_TGZ=$(find artifacts/Deep-Desk-macOS-x64 -name "*.app.tar.gz" 2>/dev/null | head -1)
+            MAC_X64_SIG=$(find artifacts/Deep-Desk-macOS-x64 -name "*.app.tar.gz.sig" 2>/dev/null | head -1)
+            if [ -n "$MAC_X64_TGZ" ] && [ -n "$MAC_X64_SIG" ]; then
+              ~/.local/bin/ossutil cp "$MAC_X64_TGZ" "oss://ccb-store/deepdesk/Deep-Desk-${VERSION}_x86_64.app.tar.gz" -f
+              MAC_X64_SIG_CONTENT=$(cat "$MAC_X64_SIG")
+              echo -n ",\"darwin-x86_64\":{\"signature\":\"$MAC_X64_SIG_CONTENT\",\"url\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-${VERSION}_x86_64.app.tar.gz\"}" >> /tmp/latest.json
+            fi
+            # macOS aarch64 free edition auto-update
+            MAC_FREE_TGZ=$(find artifacts/Deep-Desk-macOS-arm64-free -name "*.app.tar.gz" 2>/dev/null | head -1)
+            MAC_FREE_SIG=$(find artifacts/Deep-Desk-macOS-arm64-free -name "*.app.tar.gz.sig" 2>/dev/null | head -1)
+            if [ -n "$MAC_FREE_TGZ" ] && [ -n "$MAC_FREE_SIG" ]; then
+              ~/.local/bin/ossutil cp "$MAC_FREE_TGZ" "oss://ccb-store/deepdesk/Deep-Desk-${VERSION}_aarch64-free.app.tar.gz" -f
+              MAC_FREE_SIG_CONTENT=$(cat "$MAC_FREE_SIG")
+              echo -n ",\"darwin-aarch64-free\":{\"signature\":\"$MAC_FREE_SIG_CONTENT\",\"url\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-${VERSION}_aarch64-free.app.tar.gz\"}" >> /tmp/latest.json
+            fi
             WIN_SIG=$(find artifacts/Deep-Desk-Windows-x64 -name "*.sig" 2>/dev/null | head -1)
             WIN_INSTALLER=$(find artifacts/Deep-Desk-Windows-x64 \( -name "*.msi" -o -name "*.exe" \) 2>/dev/null | head -1)
             if [ -n "$WIN_SIG" ] && [ -n "$WIN_INSTALLER" ]; then

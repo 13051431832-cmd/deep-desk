@@ -1,9 +1,10 @@
-use std::process::{Child, Command};
+use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::Duration;
 use tauri::{Manager, AppHandle};
 
 static SERVER_PROCESS: Mutex<Option<Child>> = Mutex::new(None);
+static SERVER_STDERR: Mutex<Option<std::process::ChildStderr>> = Mutex::new(None);
 
 /// Write to stderr AND a log file (stderr is invisible on Windows GUI apps).
 macro_rules! log {
@@ -75,20 +76,23 @@ pub async fn start(app: &AppHandle) {
     #[cfg(not(all(target_os = "windows", target_arch = "x86")))]
     cmd.arg("run");
     cmd.arg(&server_script);
+    cmd.stderr(Stdio::piped());
 
-    let _child = match cmd
+    match cmd
         .current_dir(&resource_dir)
         .envs(&env)
         .env("NO_COLOR", "1")
         .env("TERM", "xterm-256color")
         .spawn()
     {
-        Ok(c) => {
+        Ok(mut c) => {
+            // Take stderr pipe so we can read it if the process dies
+            *SERVER_STDERR.lock().unwrap() = c.stderr.take();
             *SERVER_PROCESS.lock().unwrap() = Some(c);
         }
         Err(e) => {
             log!("[Deep Desk] Failed to start server: {e}. Bun path: {:?}", bun);
-            load_fallback(app);
+            load_fallback(app, "");
             return;
         }
     };
@@ -97,6 +101,7 @@ pub async fn start(app: &AppHandle) {
     let health_url = format!("http://localhost:{}/api/health", super::SERVER_PORT);
     let max_wait = if cfg!(debug_assertions) { 20 } else { 15 };
     let mut ready = false;
+    let mut exit_status: Option<std::process::ExitStatus> = None;
     for _ in 0..(max_wait * 2) {
         match reqwest::get(&health_url).await {
             Ok(r) if r.status().is_success() => {
@@ -106,6 +111,16 @@ pub async fn start(app: &AppHandle) {
             _ => {}
         }
         tokio::time::sleep(Duration::from_millis(500)).await;
+        // Check if process died — fail fast instead of waiting full timeout
+        if let Some(ref mut child) = *SERVER_PROCESS.lock().unwrap() {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    exit_status = Some(status);
+                    break;
+                }
+                _ => {}
+            }
+        }
     }
 
     if ready {
@@ -117,22 +132,83 @@ pub async fn start(app: &AppHandle) {
             ));
         }
     } else {
-        log!("[Deep Desk] Server failed to start within {}s", max_wait);
-        load_fallback(app);
+        // Read stderr from the dead (or stuck) process.
+        // Take the stderr handle out and drop the lock guard before awaiting.
+        let stderr_handle = SERVER_STDERR.lock().unwrap().take();
+        let stderr_text = if let Some(stderr) = stderr_handle {
+            tokio::task::spawn_blocking(move || {
+                use std::io::Read;
+                let mut s = String::new();
+                let _ = std::io::BufReader::new(stderr).read_to_string(&mut s);
+                s
+            })
+            .await
+            .unwrap_or_default()
+        } else {
+            String::new()
+        };
+
+        if let Some(status) = exit_status {
+            log!(
+                "[Deep Desk] Server exited with {}. stderr: {}",
+                status,
+                stderr_text
+            );
+        } else {
+            log!(
+                "[Deep Desk] Server failed to start within {}s. stderr: {}",
+                max_wait,
+                stderr_text
+            );
+        }
+
+        let mut detail = String::new();
+        if let Some(status) = exit_status {
+            detail.push_str(&format!(
+                "Server process exited with code {}. ",
+                status
+                    .code()
+                    .map_or_else(|| "unknown".to_string(), |c| c.to_string())
+            ));
+        } else {
+            detail.push_str(&format!(
+                "Server did not respond on port {} within {} seconds. ",
+                super::SERVER_PORT,
+                max_wait
+            ));
+        }
+        if !stderr_text.is_empty() {
+            // Escape backticks and $ for JS template literal safety
+            let escaped = stderr_text.replace('\\', "\\\\").replace('`', "\\`").replace('$', "\\$");
+            detail.push_str(&format!("\\n\\nServer output:\\n{}", escaped));
+        }
+        load_fallback(app, &detail);
     }
 }
 
 /// Display an HTML error page when the server can't start.
-fn load_fallback(app: &AppHandle) {
+fn load_fallback(app: &AppHandle, detail: &str) {
     if let Some(window) = app.get_webview_window("main") {
-        let _: Result<(), tauri::Error> = window.eval(
+        // Build detail section only if there's useful info
+        let detail_html = if detail.is_empty() {
+            String::new()
+        } else {
+            let escaped = detail.replace('\\', "\\\\").replace('`', "\\`").replace('$', "\\$");
+            format!(
+                r#"<pre style="margin-top:16px;padding:12px 16px;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#8b949e;font-size:12px;text-align:left;max-width:480px;overflow-x:auto;white-space:pre-wrap;word-break:break-all;">{}</pre>"#,
+                escaped
+            )
+        };
+        let _: Result<(), tauri::Error> = window.eval(&format!(
             r#"document.body.innerHTML = `
-            <div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;font-family:-apple-system,sans-serif;background:#0d1117;color:#e6edf3;text-align:center;padding:40px;">
+            <div style="display:flex;align-items:center;justify-content:center;min-height:100vh;flex-direction:column;font-family:-apple-system,sans-serif;background:#0d1117;color:#e6edf3;text-align:center;padding:40px;">
               <h1 style="font-size:24px;margin-bottom:16px;">Deep Desk — Server Not Running</h1>
               <p style="color:#8b949e;max-width:420px;">The backend server on localhost:3456 failed to start. Please check your installation.</p>
+              {}
               <button onclick="location.reload()" style="margin-top:20px;padding:10px 24px;background:#58a6ff;color:#000;border:none;border-radius:6px;font-weight:600;cursor:pointer;">Retry</button>
             </div>`;"#,
-        );
+            detail_html
+        ));
     }
 }
 

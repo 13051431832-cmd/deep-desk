@@ -59,7 +59,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
         body: JSON.stringify({ licenseKey: licenseKey.trim(), package: "deepdesk-pro" }),
       });
       const data = await resp.json();
-      if (resp.ok && data.pro) {
+      if (resp.ok && data.ok) {
         await checkProStatus();
         setLicenseStatus("success");
         setLicenseKey("");
@@ -96,7 +96,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
               <input type="password" placeholder={hasConfig ? "Already configured" : "sk-..."} value={deepseekKey} onInput={(e) => setDeepseekKey((e.target as HTMLInputElement).value)} />
             </label>
             <label class="settings-field">
-              <span>QWEN Vision Key <em style="color:var(--text-muted)">(optional)</em></span>
+              <span>QWEN Vision Key <em style="color:var(--text-muted)">(optional/可选，用于识别图像)</em></span>
               <input type="password" placeholder="sk-..." value={qwenKey} onInput={(e) => setQwenKey((e.target as HTMLInputElement).value)} />
             </label>
             <button class="settings-save" onClick={saveKeys} disabled={keyStatus === "saving" || (!deepseekKey && !qwenKey)}>

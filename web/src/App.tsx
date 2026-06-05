@@ -37,6 +37,11 @@ export function App() {
         if (!restored) newConversation(PORT);
       });
     }
+    // Auto-open settings if DeepSeek API key is not configured
+    fetch("/api/settings")
+      .then(r => r.json())
+      .then(d => { if (!d.deepseekKey) setShowSettings(true); })
+      .catch(() => {});
   }, []);
 
   const active = getActive();
