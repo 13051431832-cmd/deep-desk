@@ -52,12 +52,42 @@ jobs:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY_ID }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          APPLE_API_KEY_PATH: /tmp/apple-api-key.p8
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           args: --target aarch64-apple-darwin
+      - name: Notarize and staple DMG
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          DMG=$(find src-tauri/target -name "*.dmg" | head -1)
+          echo "DMG: $DMG"
+          SUBMIT_OUTPUT=$(xcrun notarytool submit "$DMG" \
+            --key /tmp/apple-api-key.p8 \
+            --key-id "$APPLE_API_KEY_ID" \
+            --issuer "$APPLE_API_ISSUER" \
+            --no-wait 2>&1)
+          echo "$SUBMIT_OUTPUT"
+          SUBMISSION_ID=$(echo "$SUBMIT_OUTPUT" | grep -o 'id: [a-f0-9-]*' | head -1 | cut -d' ' -f2)
+          echo "Submission ID: $SUBMISSION_ID"
+          for i in $(seq 1 36); do
+            echo "=== Notarization poll $i/36 at $(date) ==="
+            if xcrun notarytool wait "$SUBMISSION_ID" \
+              --key /tmp/apple-api-key.p8 \
+              --key-id "$APPLE_API_KEY_ID" \
+              --issuer "$APPLE_API_ISSUER" \
+              --timeout 5m 2>&1; then
+              echo "Notarization accepted!"
+              break
+            fi
+            echo "Poll $i done, retrying in 30s..."
+            sleep 30
+          done
+          xcrun notarytool log "$SUBMISSION_ID" \
+            --key /tmp/apple-api-key.p8 \
+            --key-id "$APPLE_API_KEY_ID" \
+            --issuer "$APPLE_API_ISSUER" || true
+          xcrun stapler staple "$DMG" || true
+          echo "Staple exit: $?"
       - uses: actions/upload-artifact@v4
         with:
           name: Deep-Desk-macOS-arm64
@@ -112,12 +142,42 @@ jobs:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY_ID }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          APPLE_API_KEY_PATH: /tmp/apple-api-key.p8
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           args: --target x86_64-apple-darwin
+      - name: Notarize and staple DMG
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          DMG=$(find src-tauri/target -name "*.dmg" | head -1)
+          echo "DMG: $DMG"
+          SUBMIT_OUTPUT=$(xcrun notarytool submit "$DMG" \
+            --key /tmp/apple-api-key.p8 \
+            --key-id "$APPLE_API_KEY_ID" \
+            --issuer "$APPLE_API_ISSUER" \
+            --no-wait 2>&1)
+          echo "$SUBMIT_OUTPUT"
+          SUBMISSION_ID=$(echo "$SUBMIT_OUTPUT" | grep -o 'id: [a-f0-9-]*' | head -1 | cut -d' ' -f2)
+          echo "Submission ID: $SUBMISSION_ID"
+          for i in $(seq 1 36); do
+            echo "=== Notarization poll $i/36 at $(date) ==="
+            if xcrun notarytool wait "$SUBMISSION_ID" \
+              --key /tmp/apple-api-key.p8 \
+              --key-id "$APPLE_API_KEY_ID" \
+              --issuer "$APPLE_API_ISSUER" \
+              --timeout 5m 2>&1; then
+              echo "Notarization accepted!"
+              break
+            fi
+            echo "Poll $i done, retrying in 30s..."
+            sleep 30
+          done
+          xcrun notarytool log "$SUBMISSION_ID" \
+            --key /tmp/apple-api-key.p8 \
+            --key-id "$APPLE_API_KEY_ID" \
+            --issuer "$APPLE_API_ISSUER" || true
+          xcrun stapler staple "$DMG" || true
+          echo "Staple exit: $?"
       - uses: actions/upload-artifact@v4
         with:
           name: Deep-Desk-macOS-x64
@@ -165,12 +225,42 @@ jobs:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY_ID }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          APPLE_API_KEY_PATH: /tmp/apple-api-key.p8
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           args: --target aarch64-apple-darwin
+      - name: Notarize and staple DMG
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          DMG=$(find src-tauri/target -name "*.dmg" | head -1)
+          echo "DMG: $DMG"
+          SUBMIT_OUTPUT=$(xcrun notarytool submit "$DMG" \
+            --key /tmp/apple-api-key.p8 \
+            --key-id "$APPLE_API_KEY_ID" \
+            --issuer "$APPLE_API_ISSUER" \
+            --no-wait 2>&1)
+          echo "$SUBMIT_OUTPUT"
+          SUBMISSION_ID=$(echo "$SUBMIT_OUTPUT" | grep -o 'id: [a-f0-9-]*' | head -1 | cut -d' ' -f2)
+          echo "Submission ID: $SUBMISSION_ID"
+          for i in $(seq 1 36); do
+            echo "=== Notarization poll $i/36 at $(date) ==="
+            if xcrun notarytool wait "$SUBMISSION_ID" \
+              --key /tmp/apple-api-key.p8 \
+              --key-id "$APPLE_API_KEY_ID" \
+              --issuer "$APPLE_API_ISSUER" \
+              --timeout 5m 2>&1; then
+              echo "Notarization accepted!"
+              break
+            fi
+            echo "Poll $i done, retrying in 30s..."
+            sleep 30
+          done
+          xcrun notarytool log "$SUBMISSION_ID" \
+            --key /tmp/apple-api-key.p8 \
+            --key-id "$APPLE_API_KEY_ID" \
+            --issuer "$APPLE_API_ISSUER" || true
+          xcrun stapler staple "$DMG" || true
+          echo "Staple exit: $?"
       - uses: actions/upload-artifact@v4
         with:
           name: Deep-Desk-macOS-arm64-free
