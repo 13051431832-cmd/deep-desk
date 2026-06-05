@@ -34,8 +34,10 @@ jobs:
           ls -la /tmp/cert.p12 2>/dev/null || echo "cert file missing"
           file /tmp/cert.p12 2>/dev/null || true
           echo "Password length: ${#APPLE_CERTIFICATE_PASSWORD}"
-          echo "Password hex: $(echo -n "$APPLE_CERTIFICATE_PASSWORD" | xxd | head -5)"
-          security import /tmp/cert.p12 -k /tmp/test.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign 2>&1 || true
+          security create-keychain -p temp /tmp/test.keychain
+          security unlock-keychain -p temp /tmp/test.keychain
+          security import /tmp/cert.p12 -k /tmp/test.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign 2>&1
+          echo "Exit code: $?"
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -82,6 +84,19 @@ jobs:
           chmod +x src-tauri/binaries/bun-darwin-x64/bun
       - name: Copy x64 Tauri config
         run: cp src-tauri/tauri.macos-x64.conf.json src-tauri/tauri.macos.conf.json
+      - name: Verify Apple certificate
+        run: |
+          echo "Base64 length: $(echo "$APPLE_CERTIFICATE" | wc -c)"
+          echo "$APPLE_CERTIFICATE" | base64 -d -o /tmp/cert.p12 2>&1 || echo "base64 decode failed"
+          ls -la /tmp/cert.p12 2>/dev/null || echo "cert file missing"
+          echo "Password length: ${#APPLE_CERTIFICATE_PASSWORD}"
+          security create-keychain -p temp /tmp/test.keychain
+          security unlock-keychain -p temp /tmp/test.keychain
+          security import /tmp/cert.p12 -k /tmp/test.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign 2>&1
+          echo "Exit code: $?"
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -118,6 +133,19 @@ jobs:
         run: cd web && bun run build
       - name: Copy free Tauri config
         run: cp src-tauri/tauri.macos-aarch64-free.conf.json src-tauri/tauri.macos.conf.json
+      - name: Verify Apple certificate
+        run: |
+          echo "Base64 length: $(echo "$APPLE_CERTIFICATE" | wc -c)"
+          echo "$APPLE_CERTIFICATE" | base64 -d -o /tmp/cert.p12 2>&1 || echo "base64 decode failed"
+          ls -la /tmp/cert.p12 2>/dev/null || echo "cert file missing"
+          echo "Password length: ${#APPLE_CERTIFICATE_PASSWORD}"
+          security create-keychain -p temp /tmp/test.keychain
+          security unlock-keychain -p temp /tmp/test.keychain
+          security import /tmp/cert.p12 -k /tmp/test.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign 2>&1
+          echo "Exit code: $?"
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -161,6 +189,19 @@ jobs:
           chmod +x src-tauri/binaries/bun-darwin-aarch64/bun
       - name: Use App Store entitlements
         run: cp src-tauri/entitlements.appstore.plist src-tauri/entitlements.plist
+      - name: Verify Apple certificate
+        run: |
+          echo "Base64 length: $(echo "$APPLE_CERTIFICATE" | wc -c)"
+          echo "$APPLE_CERTIFICATE" | base64 -d -o /tmp/cert.p12 2>&1 || echo "base64 decode failed"
+          ls -la /tmp/cert.p12 2>/dev/null || echo "cert file missing"
+          echo "Password length: ${#APPLE_CERTIFICATE_PASSWORD}"
+          security create-keychain -p temp /tmp/test.keychain
+          security unlock-keychain -p temp /tmp/test.keychain
+          security import /tmp/cert.p12 -k /tmp/test.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign 2>&1
+          echo "Exit code: $?"
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
