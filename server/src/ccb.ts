@@ -50,6 +50,8 @@ function buildEnv(): Record<string, string> {
       if (process.env[key]) env[key] = process.env[key]!;
     }
   }
+  // Override HOME with sandbox-correct path (homedir() returns container path under App Sandbox)
+  env.HOME = home;
   env.TERM = env.TERM || "xterm-256color";
   env.NO_COLOR = "1";
   // Ensure common binary paths are in PATH (fixes node/python not found)
@@ -405,7 +407,7 @@ export function spawnSession(callbacks: {
       try {
         mkdirSync(home, { recursive: true });
         const result = spawnSync(BUN_BIN, ["install", "claude-code-best"], {
-          cwd: home, env: process.env as Record<string, string>,
+          cwd: home, env: { ...process.env, HOME: home } as Record<string, string>,
           stdout: "pipe", stderr: "pipe",
         });
         if (result.exitCode !== 0 || !existsSync(CCB_SCRIPT)) {
@@ -432,7 +434,7 @@ export function spawnSession(callbacks: {
           cpSync(BUNDLED_PLUGINS, pluginCacheDir, { recursive: true });
         } else {
           const clone = spawnSync("git", ["clone", "--depth", "1", "https://github.com/anthropics/claude-plugins-official.git", pluginCacheDir], {
-            cwd: home, env: process.env as Record<string, string>,
+            cwd: home, env: { ...process.env, HOME: home } as Record<string, string>,
             stdout: "pipe", stderr: "pipe",
           });
           if (clone.exitCode !== 0) {

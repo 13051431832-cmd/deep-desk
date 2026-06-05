@@ -26,21 +26,6 @@ jobs:
           unzip -o /tmp/b.zip -d /tmp/bun-mac/
           mv /tmp/bun-mac/bun-darwin-aarch64/bun src-tauri/binaries/bun-darwin-aarch64/bun
           chmod +x src-tauri/binaries/bun-darwin-aarch64/bun
-      - name: Import Apple code signing certificate
-        if: env.APPLE_CERTIFICATE != ''
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-        run: |
-          KEYCHAIN="build.keychain"
-          KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          security default-keychain -s "$KEYCHAIN"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          echo "$APPLE_CERTIFICATE" | base64 --decode > /tmp/cert.p12
-          security import /tmp/cert.p12 -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          rm /tmp/cert.p12
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -84,21 +69,6 @@ jobs:
           chmod +x src-tauri/binaries/bun-darwin-x64/bun
       - name: Copy x64 Tauri config
         run: cp src-tauri/tauri.macos-x64.conf.json src-tauri/tauri.macos.conf.json
-      - name: Import Apple code signing certificate
-        if: env.APPLE_CERTIFICATE != ''
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-        run: |
-          KEYCHAIN="build.keychain"
-          KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          security default-keychain -s "$KEYCHAIN"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          echo "$APPLE_CERTIFICATE" | base64 --decode > /tmp/cert.p12
-          security import /tmp/cert.p12 -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          rm /tmp/cert.p12
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -135,21 +105,6 @@ jobs:
         run: cd web && bun run build
       - name: Copy free Tauri config
         run: cp src-tauri/tauri.macos-aarch64-free.conf.json src-tauri/tauri.macos.conf.json
-      - name: Import Apple code signing certificate
-        if: env.APPLE_CERTIFICATE != ''
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-        run: |
-          KEYCHAIN="build.keychain"
-          KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          security default-keychain -s "$KEYCHAIN"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          echo "$APPLE_CERTIFICATE" | base64 --decode > /tmp/cert.p12
-          security import /tmp/cert.p12 -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          rm /tmp/cert.p12
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -170,6 +125,48 @@ jobs:
             src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
             src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz
             src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
+
+  macos-appstore:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: latest }
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with: { targets: "aarch64-apple-darwin" }
+      - name: Install dependencies
+        run: bun install && cd web && bun install
+      - name: Build frontend
+        run: cd web && bun run build
+      - name: Download Bun (macOS arm64)
+        run: |
+          mkdir -p src-tauri/binaries/bun-darwin-aarch64
+          curl -fsSL https://github.com/oven-sh/bun/releases/latest/download/bun-darwin-aarch64.zip -o /tmp/b.zip
+          unzip -o /tmp/b.zip -d /tmp/bun-mac/
+          mv /tmp/bun-mac/bun-darwin-aarch64/bun src-tauri/binaries/bun-darwin-aarch64/bun
+          chmod +x src-tauri/binaries/bun-darwin-aarch64/bun
+      - name: Use App Store entitlements
+        run: cp src-tauri/entitlements.appstore.plist src-tauri/entitlements.plist
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APP_STORE_BUILD: "1"
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          args: --target aarch64-apple-darwin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Deep-Desk-macOS-AppStore
+          path: |
+            src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app
+            src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz
 
   windows-x64:
     runs-on: windows-latest
