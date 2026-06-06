@@ -27,6 +27,7 @@ const CCB_ENV_KEYS = [
   "DEEPSEEK_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_AUTH_TOKEN",
   "OPENAI_BASE_URL", "ANTHROPIC_BASE_URL",
   "ANTHROPIC_MODEL", "ANTHROPIC_SMALL_FAST_MODEL",
+  "OPENAI_MODEL", "OPENAI_SMALL_FAST_MODEL",
   "CLAUDE_CODE_USE_OPENAI", "QWEN_API_KEY", "DASHSCOPE_API_KEY",
 ];
 
@@ -65,6 +66,8 @@ function buildEnv(): Record<string, string> {
   env.ANTHROPIC_BASE_URL = env.ANTHROPIC_BASE_URL || "https://api.deepseek.com/anthropic";
   env.ANTHROPIC_MODEL = env.ANTHROPIC_MODEL || "deepseek-v4-pro";
   env.ANTHROPIC_SMALL_FAST_MODEL = env.ANTHROPIC_SMALL_FAST_MODEL || "deepseek-v4-flash";
+  env.OPENAI_MODEL = env.OPENAI_MODEL || "deepseek-v4-pro";
+  env.OPENAI_SMALL_FAST_MODEL = env.OPENAI_SMALL_FAST_MODEL || "deepseek-v4-flash";
   // Windows: ensure SHELL + PATH include git bash (bundled or system)
   if (isWin) {
     // Bundled MinGit: check usr/bin/bash.exe, cmd/git.exe

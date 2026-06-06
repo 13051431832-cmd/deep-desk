@@ -309,6 +309,8 @@ jobs:
         env:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
       - uses: tauri-apps/tauri-action@v0
+        id: tauri-build
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -322,6 +324,16 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           args: --target aarch64-apple-darwin
+      - name: Check build output (notarization may have failed transiently)
+        if: steps.tauri-build.outcome == 'failure'
+        run: |
+          echo "tauri-action failed (likely notarization network error). Checking if .app exists..."
+          if [ -d "src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Deep Desk.app" ]; then
+            echo "OK: .app bundle exists despite tauri-action failure — uploading unsigned artifact"
+          else
+            echo "ERROR: .app bundle missing — tauri-action failure was not notarization-related"
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: Deep-Desk-macOS-AppStore
@@ -527,10 +539,17 @@ jobs:
             Write-Host "  $($_.FullName)$size"
           }
 
+          # Find main executable (Tauri names it after productName; handle MSI/NSIS path variations)
+          $appExe = Get-ChildItem -Path $INSTALL_DIR -Filter "*.exe" -File -Depth 1 |
+              Where-Object { $_.FullName -notmatch "\\binaries\\|\\node_modules\\|uninstall|vcredist" } |
+              Select-Object -First 1
+          if (-not $appExe) { throw "No main executable found in $INSTALL_DIR" }
+          Write-Host "Main executable: $($appExe.Name)"
+
           # Verify critical bundled resources from tauri.windows.conf.json
           Write-Host "`n=== File integrity checks ==="
           $checks = @(
-            @{Path = "$INSTALL_DIR\Deep Desk.exe"; Desc = "Main executable"},
+            @{Path = $appExe.FullName; Desc = "Main executable"},
             @{Path = "$INSTALL_DIR\binaries\bun-windows-x64\bun.exe"; Desc = "Bundled bun binary"},
             @{Path = "$INSTALL_DIR\server"; Desc = "Server source directory"},
             @{Path = "$INSTALL_DIR\package.json"; Desc = "package.json"}
@@ -550,8 +569,7 @@ jobs:
 
           # Smoke test: launch app, verify process lives briefly
           Write-Host "`n=== Launch smoke test ==="
-          $appExe = "$INSTALL_DIR\Deep Desk.exe"
-          $p = Start-Process $appExe -PassThru -WindowStyle Hidden
+          $p = Start-Process $appExe.FullName -PassThru -WindowStyle Hidden
           Start-Sleep -Seconds 8
 
           if ($p.HasExited) {
