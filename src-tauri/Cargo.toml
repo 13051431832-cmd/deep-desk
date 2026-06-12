@@ -1,6 +1,6 @@
 [package]
 name = "deep-desk"
-version = "1.0.10"
+version = "1.0.11"
 description = "Deep Desk — AI coding assistant desktop app"
 authors = []
 edition = "2021"

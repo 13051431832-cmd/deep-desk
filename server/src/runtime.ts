@@ -119,8 +119,13 @@ function contentTypeFromPath(path: string): string {
 
 export function moduleDir(importMeta: ImportMeta): string {
   if (IS_BUN) return (importMeta as any).dir;
-  // Node.js: derive from import.meta.url
-  return new URL(".", importMeta.url).pathname;
+  // Node.js: derive from import.meta.url — pathname is percent-encoded, decode it
+  let pathname = new URL(".", importMeta.url).pathname;
+  // On Windows, file URL pathnames start with "/C:", strip the leading slash
+  if (process.platform === "win32" && pathname.startsWith("/")) {
+    pathname = pathname.slice(1);
+  }
+  return decodeURIComponent(pathname);
 }
 
 // ── Process management ────────────────────────────────────────────────────
