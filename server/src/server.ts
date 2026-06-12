@@ -191,16 +191,33 @@ serve({
     }
 
     if (url.pathname === "/api/status") {
-      const bundledBun = join(MODULE_DIR, "../../binaries", `bun-darwin-${process.arch === "arm64" ? "aarch64" : "x64"}/bun`);
-      const bunBin = existsSync(bundledBun) ? bundledBun : join(homedir(), ".bun", "bin", "bun");
+      // Platform-aware bundled runtime path
+      let bundledBun: string;
+      if (process.platform === "win32") {
+        bundledBun = join(MODULE_DIR, "../../binaries/bun-windows-x64/bun.exe");
+      } else if (process.platform === "darwin") {
+        bundledBun = join(MODULE_DIR, "../../binaries", `bun-darwin-${process.arch === "arm64" ? "aarch64" : "x64"}/bun`);
+      } else {
+        bundledBun = join(MODULE_DIR, "../../binaries", `bun-linux-${process.arch === "arm64" ? "aarch64" : "x64"}/bun`);
+      }
+      const systemBun = process.platform === "win32"
+        ? join(homedir(), ".bun", "bin", "bun.exe")
+        : join(homedir(), ".bun", "bin", "bun");
+      const bunBin = existsSync(bundledBun) ? bundledBun : systemBun;
+      // x86 Windows: check for Node.js runtime (Bun has no x86 binary)
+      const isX86 = process.platform === "win32" && process.arch === "ia32";
+      const nodeBin = isX86 ? join(MODULE_DIR, "../../binaries/node-win-x86/node.exe") : "";
+      const hasRuntime = isX86 ? existsSync(nodeBin) : existsSync(bunBin);
       const ccbScript = join(homedir(), "node_modules", "claude-code-best", "dist", "cli.js");
       const hasKey = !!(process.env.OPENAI_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN || process.env.DEEPSEEK_API_KEY);
       return new Response(JSON.stringify({
-        bun: existsSync(bunBin), ccb: existsSync(ccbScript),
+        platform: process.platform, arch: process.arch,
+        bun: existsSync(bunBin), node: isX86 ? existsSync(nodeBin) : false,
+        ccb: existsSync(ccbScript),
         mcpConfig: existsSync(MCP_CONFIG_LOCAL),
         claudeMd: existsSync(join(homedir(), "CLAUDE.md")) || existsSync(join(homedir(), ".claude", "CLAUDE.md")),
         apiKey: hasKey, vision: !!(process.env.QWEN_API_KEY || process.env.DASHSCOPE_API_KEY),
-        ready: existsSync(bunBin) && existsSync(ccbScript) && hasKey,
+        ready: hasRuntime && existsSync(ccbScript) && hasKey,
         version: CURRENT_VERSION, sessions: convSessions.size,
       }), { headers: { "Content-Type": "application/json" } });
     }
