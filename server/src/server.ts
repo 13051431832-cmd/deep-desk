@@ -3,7 +3,7 @@ import type { CCBSession } from "./ccb";
 import { existsSync, mkdirSync } from "fs";
 import { homedir, tmpdir } from "os";
 import { join, normalize } from "path";
-import { readTextFile, writeFileData, fileExists, deleteFileData, readFileBytes, fileSizeSync, globSync, createFileResponse, moduleDir, serve, spawnProcess, readStreamToText, type ServeWebSocket } from "./runtime";
+import { IS_BUN, readTextFile, writeFileData, fileExists, deleteFileData, readFileBytes, fileSizeSync, globSync, createFileResponse, moduleDir, serve, spawnProcess, readStreamToText, type ServeWebSocket } from "./runtime";
 
 const PORT = parseInt(process.env.PORT || "3456");
 
@@ -203,6 +203,40 @@ serve({
         ready: existsSync(bunBin) && existsSync(ccbScript) && hasKey,
         version: CURRENT_VERSION, sessions: convSessions.size,
       }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    // ── Diagnostic endpoint (debug) ───────────────────────────────
+    if (url.pathname === "/api/debug") {
+      const files: string[] = [];
+      try {
+        const { readdirSync } = await import("fs");
+        const top = readdirSync(STATIC_DIR).slice(0, 20);
+        files.push(...top.map((f: string) => `  ${f}`));
+      } catch (e: any) { files.push(`(STATIC_DIR not readable: ${e.message})`); }
+      // Try to list parent directories to understand what exists
+      const serverDir = join(MODULE_DIR, "..");
+      const serverFiles: string[] = [];
+      try {
+        const { readdirSync } = await import("fs");
+        serverFiles.push(...readdirSync(serverDir).slice(0, 30));
+      } catch (e: any) { serverFiles.push(`(not readable: ${e.message})`); }
+      return new Response(JSON.stringify({
+        platform: process.platform,
+        isBun: IS_BUN,
+        importMetaUrl: import.meta.url,
+        cwd: process.cwd(),
+        moduleDir: MODULE_DIR,
+        devStatic: DEV_STATIC,
+        installedStatic: INSTALLED_STATIC,
+        staticDir: STATIC_DIR,
+        staticDirExists: existsSync(STATIC_DIR),
+        indexExists: existsSync(join(STATIC_DIR, "index.html")),
+        webIndex: WEB_INDEX,
+        webIndexExists: existsSync(WEB_INDEX),
+        staticFiles: files,
+        serverParentDir: serverDir,
+        serverParentFiles: serverFiles,
+      }, null, 2), { headers: { "Content-Type": "application/json" } });
     }
 
     // ── Update check ───────────────────────────────────────────

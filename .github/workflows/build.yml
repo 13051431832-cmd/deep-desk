@@ -449,6 +449,11 @@ jobs:
       - name: Build frontend
         run: cd web && npm run build
         shell: bash
+      - name: Download Node.js (Windows x86)
+        shell: bash
+        run: |
+          mkdir -p src-tauri/binaries/node-win-x86
+          curl -fsSL https://nodejs.org/dist/v22.12.0/win-x86/node.exe -o src-tauri/binaries/node-win-x86/node.exe
       - name: Compile server TS → JS (for Node.js)
         shell: bash
         run: |
