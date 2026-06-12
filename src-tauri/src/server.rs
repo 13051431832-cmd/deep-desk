@@ -77,6 +77,15 @@ pub async fn start(app: &AppHandle) {
     cmd.arg("run");
     cmd.arg(&server_script);
     cmd.stderr(Stdio::piped());
+    // Prevent the child process from opening a visible console window on Windows
+    cmd.stdin(Stdio::null());
+    cmd.stdout(Stdio::null());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
 
     match cmd
         .current_dir(&resource_dir)

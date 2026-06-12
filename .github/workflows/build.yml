@@ -646,6 +646,7 @@ jobs:
           if [ -n "$X86_FREE_FILE" ]; then
             X86_FREE_EXT="${X86_FREE_FILE##*.}"
             ~/.local/bin/ossutil cp "$X86_FREE_FILE" "oss://ccb-store/deepdesk/Deep-Desk-setup-x86-free.${X86_FREE_EXT}" -f
+            ~/.local/bin/ossutil cp "$X86_FREE_FILE" "oss://ccb-store/deepdesk/Deep-Desk-${VERSION}_x86-free.${X86_FREE_EXT}" -f
           fi
           # Auto-update: upload versioned mac app.tar.gz + .sig
           MAC_TGZ=$(find artifacts/Deep-Desk-macOS-arm64 -name "*.app.tar.gz" 2>/dev/null | head -1)
@@ -684,6 +685,11 @@ jobs:
             if [ -n "$X86_SIG" ] && [ -n "$X86_FILE" ]; then
               X86_SIG_CONTENT=$(cat "$X86_SIG")
               echo -n ",\"windows-x86\":{\"signature\":\"$X86_SIG_CONTENT\",\"url\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-${VERSION}_x86.${X86_EXT}\"}" >> /tmp/latest.json
+            fi
+            X86_FREE_SIG=$(find artifacts/Deep-Desk-Windows-x86-free -name "*.sig" 2>/dev/null | head -1)
+            if [ -n "$X86_FREE_SIG" ] && [ -n "$X86_FREE_FILE" ]; then
+              X86_FREE_SIG_CONTENT=$(cat "$X86_FREE_SIG")
+              echo -n ",\"windows-x86-free\":{\"signature\":\"$X86_FREE_SIG_CONTENT\",\"url\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-${VERSION}_x86-free.${X86_FREE_EXT}\"}" >> /tmp/latest.json
             fi
             echo "}}" >> /tmp/latest.json
             ~/.local/bin/ossutil cp /tmp/latest.json oss://ccb-store/deepdesk/latest.json -f
