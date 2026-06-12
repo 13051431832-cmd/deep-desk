@@ -2,7 +2,7 @@
 // Bun has no x86 Windows binary, so x86 builds ship Node.js instead.
 
 import { readFile, writeFile, stat, unlink, readdir, mkdir } from "node:fs/promises";
-import { createReadStream } from "node:fs";
+import { createReadStream, statSync, readdirSync } from "node:fs";
 import { Readable } from "node:stream";
 import { spawn as nodeSpawn, spawnSync as nodeSpawnSync, type ChildProcess } from "node:child_process";
 import http from "node:http";
@@ -53,19 +53,14 @@ export async function readFileBytes(path: string): Promise<Uint8Array> {
 
 export function fileSizeSync(path: string): number {
   if (IS_BUN) return (globalThis as any).Bun.file(path).size;
-  try {
-    const { statSync } = require("node:fs");
-    return statSync(path).size;
-  } catch { return 0; }
+  try { return statSync(path).size; } catch { return 0; }
 }
 
 export function globSync(pattern: string, opts: { cwd: string; absolute?: boolean }): string[] {
   if (IS_BUN) {
     return Array.from(new (globalThis as any).Bun.Glob(pattern).scanSync(opts));
   }
-  // Node.js: simple glob for common patterns. For *.json, filter by extension.
   try {
-    const { readdirSync } = require("node:fs");
     const files = readdirSync(opts.cwd) as string[];
     if (pattern === "*.json") {
       return files
@@ -86,7 +81,6 @@ export function createFileResponse(path: string): Response {
   try {
     const stream = createReadStream(path);
     const webStream = Readable.toWeb(stream) as ReadableStream;
-    const { statSync } = require("node:fs");
     const size = statSync(path).size;
     return new Response(webStream, {
       headers: {
