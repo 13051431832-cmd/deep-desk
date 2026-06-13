@@ -35,17 +35,8 @@ pub async fn start(app: &AppHandle) {
     let bun = if bundled.exists() {
         bundled
     } else {
-        // Free edition: no bundled runtime, use system runtime from PATH
-        #[cfg(all(target_os = "windows", target_arch = "x86"))]
-        {
-            log!("[Deep Desk] Bundled node not found, using system node");
-            std::path::PathBuf::from("node")
-        }
-        #[cfg(not(all(target_os = "windows", target_arch = "x86")))]
-        {
-            log!("[Deep Desk] Bundled bun not found, using system bun");
-            std::path::PathBuf::from("bun")
-        }
+        log!("[Deep Desk] Bundled bun not found, using system bun");
+        std::path::PathBuf::from("bun")
     };
 
     // Ensure bun is executable on macOS

@@ -392,89 +392,44 @@ jobs:
             src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi.sig
             src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe.sig
 
-  windows-x86:
+  windows-x64-free:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: "22" }
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: latest }
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        with: { targets: "i686-pc-windows-msvc" }
       - name: Install dependencies
         shell: bash
-        run: npm install && cd web && npm install
+        run: bun install && cd web && bun install
       - name: Build frontend
-        run: cd web && npm run build
+        run: cd web && bun run build
         shell: bash
-      - name: Download Node.js (Windows x86)
-        shell: bash
-        run: |
-          mkdir -p src-tauri/binaries/node-win-x86
-          curl -fsSL https://nodejs.org/dist/v22.12.0/win-x86/node.exe -o src-tauri/binaries/node-win-x86/node.exe
-      - name: Compile server TS → JS (for Node.js)
+      - name: Download Bun (Windows x64)
         shell: bash
         run: |
-          npx esbuild server/src/server.ts --bundle --platform=node --outfile=server/dist/server.mjs --format=esm --external:ws --external:strip-ansi
-      - name: Copy x86 Tauri config
+          mkdir -p src-tauri/binaries/bun-windows-x64
+          curl -fsSL https://github.com/oven-sh/bun/releases/latest/download/bun-windows-x64.zip -o /tmp/b.zip
+          unzip -o /tmp/b.zip -d /tmp/bun-win/
+          mv /tmp/bun-win/bun-windows-x64/bun.exe src-tauri/binaries/bun-windows-x64/bun.exe
+      - name: Copy x64-free Tauri config
         shell: bash
-        run: cp src-tauri/tauri.windows-x86.conf.json src-tauri/tauri.windows.conf.json
+        run: cp src-tauri/tauri.windows-x64-free.conf.json src-tauri/tauri.windows.conf.json
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         with:
-          args: --target i686-pc-windows-msvc
+          args: --target x86_64-pc-windows-msvc
       - uses: actions/upload-artifact@v4
         with:
-          name: Deep-Desk-Windows-x86
+          name: Deep-Desk-Windows-x64-free
           path: |
-            src-tauri/target/i686-pc-windows-msvc/release/bundle/nsis/*.exe
-            src-tauri/target/i686-pc-windows-msvc/release/bundle/msi/*.msi
-            src-tauri/target/i686-pc-windows-msvc/release/bundle/msi/*.msi.sig
-            src-tauri/target/i686-pc-windows-msvc/release/bundle/nsis/*.exe.sig
-
-  windows-x86-free:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: "22" }
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with: { targets: "i686-pc-windows-msvc" }
-      - name: Install dependencies
-        shell: bash
-        run: npm install && cd web && npm install
-      - name: Build frontend
-        run: cd web && npm run build
-        shell: bash
-      - name: Download Node.js (Windows x86)
-        shell: bash
-        run: |
-          mkdir -p src-tauri/binaries/node-win-x86
-          curl -fsSL https://nodejs.org/dist/v22.12.0/win-x86/node.exe -o src-tauri/binaries/node-win-x86/node.exe
-      - name: Compile server TS → JS (for Node.js)
-        shell: bash
-        run: |
-          npx esbuild server/src/server.ts --bundle --platform=node --outfile=server/dist/server.mjs --format=esm --external:ws --external:strip-ansi
-      - name: Copy x86-free Tauri config
-        shell: bash
-        run: cp src-tauri/tauri.windows-x86-free.conf.json src-tauri/tauri.windows.conf.json
-      - uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-        with:
-          args: --target i686-pc-windows-msvc
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Deep-Desk-Windows-x86-free
-          path: |
-            src-tauri/target/i686-pc-windows-msvc/release/bundle/nsis/*.exe
-            src-tauri/target/i686-pc-windows-msvc/release/bundle/msi/*.msi
-            src-tauri/target/i686-pc-windows-msvc/release/bundle/msi/*.msi.sig
-            src-tauri/target/i686-pc-windows-msvc/release/bundle/nsis/*.exe.sig
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi.sig
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe.sig
 
   e2e-windows:
     needs: [windows-x64]
@@ -589,7 +544,7 @@ jobs:
           Write-Host "`n=== E2E Windows verification: PASSED ==="
 
   release:
-    needs: [macos-aarch64, macos-x64, macos-aarch64-free, windows-x64, windows-x86, windows-x86-free]
+    needs: [macos-aarch64, macos-x64, macos-aarch64-free, windows-x64, windows-x64-free]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
@@ -631,27 +586,16 @@ jobs:
             echo "{\"version\":\"$VERSION\",\"macUrl\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-latest.dmg\",\"macX64Url\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-latest-x64.dmg\",\"macFreeUrl\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-latest-free.dmg\",\"winUrl\":\"\"}" > v.json
           fi
           ~/.local/bin/ossutil cp v.json oss://ccb-store/deepdesk/version.json -f
-          # Upload x86 full edition
-          X86_EXE=$(find artifacts/Deep-Desk-Windows-x86 -name "*.exe" 2>/dev/null | head -1)
-          X86_MSI=$(find artifacts/Deep-Desk-Windows-x86 -name "*.msi" 2>/dev/null | head -1)
-          X86_FILE=""
-          [ -n "$X86_MSI" ] && X86_FILE="$X86_MSI"
-          [ -z "$X86_FILE" ] && [ -n "$X86_EXE" ] && X86_FILE="$X86_EXE"
-          if [ -n "$X86_FILE" ]; then
-            X86_EXT="${X86_FILE##*.}"
-            ~/.local/bin/ossutil cp "$X86_FILE" "oss://ccb-store/deepdesk/Deep-Desk-setup-x86.${X86_EXT}" -f
-            ~/.local/bin/ossutil cp "$X86_FILE" "oss://ccb-store/deepdesk/Deep-Desk-${VERSION}_x86.${X86_EXT}" -f
-          fi
-          # Upload x86 free edition
-          X86_FREE_EXE=$(find artifacts/Deep-Desk-Windows-x86-free -name "*.exe" 2>/dev/null | head -1)
-          X86_FREE_MSI=$(find artifacts/Deep-Desk-Windows-x86-free -name "*.msi" 2>/dev/null | head -1)
-          X86_FREE_FILE=""
-          [ -n "$X86_FREE_MSI" ] && X86_FREE_FILE="$X86_FREE_MSI"
-          [ -z "$X86_FREE_FILE" ] && [ -n "$X86_FREE_EXE" ] && X86_FREE_FILE="$X86_FREE_EXE"
-          if [ -n "$X86_FREE_FILE" ]; then
-            X86_FREE_EXT="${X86_FREE_FILE##*.}"
-            ~/.local/bin/ossutil cp "$X86_FREE_FILE" "oss://ccb-store/deepdesk/Deep-Desk-setup-x86-free.${X86_FREE_EXT}" -f
-            ~/.local/bin/ossutil cp "$X86_FREE_FILE" "oss://ccb-store/deepdesk/Deep-Desk-${VERSION}_x86-free.${X86_FREE_EXT}" -f
+          # Upload x64 free edition
+          X64_FREE_EXE=$(find artifacts/Deep-Desk-Windows-x64-free -name "*.exe" 2>/dev/null | head -1)
+          X64_FREE_MSI=$(find artifacts/Deep-Desk-Windows-x64-free -name "*.msi" 2>/dev/null | head -1)
+          X64_FREE_FILE=""
+          [ -n "$X64_FREE_MSI" ] && X64_FREE_FILE="$X64_FREE_MSI"
+          [ -z "$X64_FREE_FILE" ] && [ -n "$X64_FREE_EXE" ] && X64_FREE_FILE="$X64_FREE_EXE"
+          if [ -n "$X64_FREE_FILE" ]; then
+            X64_FREE_EXT="${X64_FREE_FILE##*.}"
+            ~/.local/bin/ossutil cp "$X64_FREE_FILE" "oss://ccb-store/deepdesk/Deep-Desk-setup-x64-free.${X64_FREE_EXT}" -f
+            ~/.local/bin/ossutil cp "$X64_FREE_FILE" "oss://ccb-store/deepdesk/Deep-Desk-${VERSION}_x64-free.${X64_FREE_EXT}" -f
           fi
           # Auto-update: upload versioned mac app.tar.gz + .sig
           MAC_TGZ=$(find artifacts/Deep-Desk-macOS-arm64 -name "*.app.tar.gz" 2>/dev/null | head -1)
@@ -685,16 +629,6 @@ jobs:
               WIN_SIG_CONTENT=$(cat "$WIN_SIG")
               echo -n ",\"windows-x86_64\":{\"signature\":\"$WIN_SIG_CONTENT\",\"url\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-${VERSION}_x64.${W_EXT}\"}" >> /tmp/latest.json
               ~/.local/bin/ossutil cp "$WIN_INSTALLER" "oss://ccb-store/deepdesk/Deep-Desk-${VERSION}_x64.${W_EXT}" -f
-            fi
-            X86_SIG=$(find artifacts/Deep-Desk-Windows-x86 -name "*.sig" 2>/dev/null | head -1)
-            if [ -n "$X86_SIG" ] && [ -n "$X86_FILE" ]; then
-              X86_SIG_CONTENT=$(cat "$X86_SIG")
-              echo -n ",\"windows-x86\":{\"signature\":\"$X86_SIG_CONTENT\",\"url\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-${VERSION}_x86.${X86_EXT}\"}" >> /tmp/latest.json
-            fi
-            X86_FREE_SIG=$(find artifacts/Deep-Desk-Windows-x86-free -name "*.sig" 2>/dev/null | head -1)
-            if [ -n "$X86_FREE_SIG" ] && [ -n "$X86_FREE_FILE" ]; then
-              X86_FREE_SIG_CONTENT=$(cat "$X86_FREE_SIG")
-              echo -n ",\"windows-x86-free\":{\"signature\":\"$X86_FREE_SIG_CONTENT\",\"url\":\"https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/Deep-Desk-${VERSION}_x86-free.${X86_FREE_EXT}\"}" >> /tmp/latest.json
             fi
             echo "}}" >> /tmp/latest.json
             ~/.local/bin/ossutil cp /tmp/latest.json oss://ccb-store/deepdesk/latest.json -f

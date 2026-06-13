@@ -11,8 +11,6 @@ const BUN_PATH: &str = "binaries/bun-darwin-aarch64/bun";
 const BUN_PATH: &str = "binaries/bun-darwin-x64/bun";
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 const BUN_PATH: &str = "binaries/bun-windows-x64/bun.exe";
-#[cfg(all(target_os = "windows", target_arch = "x86"))]
-const BUN_PATH: &str = "binaries/node-win-x86/node.exe";
 
 const SERVER_PORT: u16 = 3456;
 
