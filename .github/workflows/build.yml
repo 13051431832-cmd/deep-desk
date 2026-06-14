@@ -199,6 +199,13 @@ jobs:
         run: bun install && cd web && bun install
       - name: Build frontend
         run: cd web && bun run build
+      - name: Download Bun (macOS arm64)
+        run: |
+          mkdir -p src-tauri/binaries/bun-darwin-aarch64
+          curl -fsSL https://github.com/oven-sh/bun/releases/latest/download/bun-darwin-aarch64.zip -o /tmp/b.zip
+          unzip -o /tmp/b.zip -d /tmp/bun-mac/
+          mv /tmp/bun-mac/bun-darwin-aarch64/bun src-tauri/binaries/bun-darwin-aarch64/bun
+          chmod +x src-tauri/binaries/bun-darwin-aarch64/bun
       - name: Copy free Tauri config
         run: cp src-tauri/tauri.macos-aarch64-free.conf.json src-tauri/tauri.macos.conf.json
       - name: Verify Apple certificate
