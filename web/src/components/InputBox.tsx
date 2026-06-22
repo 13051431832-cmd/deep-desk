@@ -5,6 +5,7 @@ interface Props {
   onSend: (text: string) => void;
   onCancel?: () => void;
   onCommand?: (cmd: string, arg: string) => boolean | Promise<boolean>;
+  onImageChat: (imageFile: File, question: string, description: string) => Promise<void>;
   agentMode: boolean;
   agentStatus: "off" | "warming" | "on";
   onToggleAgent: (enabled: boolean) => void;
@@ -15,6 +16,8 @@ interface Props {
   bypassPermissions: boolean;
   onTogglePlan: (enabled: boolean) => void;
   onToggleBypass: (enabled: boolean) => void;
+  hasApiKey: boolean;
+  onShowSettings: () => void;
 }
 
 interface ImageAttachment {
@@ -22,6 +25,8 @@ interface ImageAttachment {
   file: File;
   previewUrl: string;
   description: string | null;
+  filePath: string | null;
+  originalPath: string | null;
   loading: boolean;
 }
 
@@ -76,10 +81,11 @@ function fileIcon(file: File): string {
   return map[ext] || "📎";
 }
 
-export function InputBox({ onSend, onCancel, onCommand, agentMode, agentStatus, onToggleAgent, onStopAgent, onStartAgent, isStreaming, planMode, bypassPermissions, onTogglePlan, onToggleBypass }: Props) {
+export function InputBox({ onSend, onCancel, onCommand, onImageChat, agentMode, agentStatus, onToggleAgent, onStopAgent, onStartAgent, isStreaming, planMode, bypassPermissions, onTogglePlan, onToggleBypass, hasApiKey, onShowSettings }: Props) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [images, setImages] = useState<ImageAttachment[]>([]);
   const [files, setFiles] = useState<FileAttachment[]>([]);
+  const tauriDropHandled = useRef(false);
   const [inputText, setInputText] = useState("");
   const isComposing = useRef(false);
 
@@ -91,7 +97,7 @@ export function InputBox({ onSend, onCancel, onCommand, agentMode, agentStatus, 
       const data = await resp.json();
       if (data.ok) {
         setImages((prev) => prev.map((i) =>
-          i.id === img.id ? { ...i, description: data.description, loading: false } : i
+          i.id === img.id ? { ...i, description: data.description, filePath: data.filePath || null, loading: false } : i
         ));
       } else {
         setImages((prev) => prev.map((i) =>
@@ -105,12 +111,14 @@ export function InputBox({ onSend, onCancel, onCommand, agentMode, agentStatus, 
     }
   };
 
-  const addImage = (file: File) => {
+  const addImage = (file: File, originalPath?: string) => {
     const img: ImageAttachment = {
       id: Math.random().toString(36).slice(2, 8),
       file,
       previewUrl: URL.createObjectURL(file),
       description: null,
+      filePath: null,
+      originalPath: originalPath || null,
       loading: true,
     };
     setImages((prev) => [...prev, img]);
@@ -200,6 +208,25 @@ export function InputBox({ onSend, onCancel, onCommand, agentMode, agentStatus, 
     const hasImages = images.length > 0 && images.some((i) => i.description);
     const hasFiles = files.length > 0;
 
+    // Require API key before sending
+    if (!hasApiKey) {
+      onShowSettings();
+      return;
+    }
+
+    // Image-only messages: use direct QWEN → DeepSeek chat (bypass CCB)
+    if (hasImages && !hasFiles) {
+      const firstImg = images.find((i) => i.description && !i.description.startsWith("Error"));
+      if (firstImg) {
+        const q = text || "请描述这张图片";
+        if (inputRef.current) { inputRef.current.value = ""; setInputText(""); }
+        for (const img of images) URL.revokeObjectURL(img.previewUrl);
+        setImages([]);
+        onImageChat(firstImg.file, q, firstImg.description!);
+        return;
+      }
+    }
+
     if (text.startsWith("/") && !hasImages && !hasFiles) {
       const space = text.indexOf(" ");
       const cmd = space > 0 ? text.slice(1, space) : text.slice(1);
@@ -233,7 +260,11 @@ export function InputBox({ onSend, onCancel, onCommand, agentMode, agentStatus, 
 
     for (const img of images) {
       if (img.description && !img.description.startsWith("Error")) {
-        fullText += `[Image: ${img.description}]\n\n`;
+        if (img.originalPath) {
+          fullText += `[Image: ${img.originalPath}]\n${img.description}\n\n`;
+        } else {
+          fullText += `[Image: ${img.file.name}]\n${img.description}\n\n`;
+        }
       }
     }
 
@@ -264,6 +295,12 @@ export function InputBox({ onSend, onCancel, onCommand, agentMode, agentStatus, 
     setInputText(inputRef.current?.value || "");
   };
 
+  const isImageFile = (f: File) => {
+    if (f.type.startsWith("image/")) return true;
+    const ext = f.name.split(".").pop()?.toLowerCase() || "";
+    return new Set(["jpg","jpeg","png","gif","webp","bmp","svg","ico","tiff","tif","heic","heif"]).has(ext);
+  };
+
   const handlePaste = (e: ClipboardEvent) => {
     const items = e.clipboardData?.items;
     if (!items) return;
@@ -273,10 +310,32 @@ export function InputBox({ onSend, onCancel, onCommand, agentMode, agentStatus, 
         e.preventDefault();
         const file = item.getAsFile();
         if (file) {
-          if (file.type.startsWith("image/")) addImage(file);
+          if (isImageFile(file)) addImage(file);
           else addFile(file);
         }
+      } else if (item.kind === "image" || (item.kind === "string" && item.type.startsWith("image/"))) {
+        // Raw image data from clipboard (e.g., screenshots on some platforms)
+        e.preventDefault();
+        const blob = item.getAsFile();
+        if (blob) {
+          const ext = item.type.split("/")[1] || "png";
+          const file = new File([blob], `clipboard.${ext}`, { type: item.type });
+          addImage(file);
+        }
       }
+    }
+  };
+
+  const handleDrop = (e: DragEvent) => {
+    e.preventDefault();
+    // If Tauri native handler already processed this drop, skip DOM path
+    if (tauriDropHandled.current) return;
+    const droppedFiles = e.dataTransfer?.files;
+    if (!droppedFiles) return;
+    for (let i = 0; i < droppedFiles.length; i++) {
+      const file = droppedFiles[i];
+      if (isImageFile(file)) addImage(file);
+      else addFile(file);
     }
   };
 
@@ -286,7 +345,10 @@ export function InputBox({ onSend, onCancel, onCommand, agentMode, agentStatus, 
 
   // Listen for Tauri-native file drops (forwarded from Rust)
   useEffect(() => {
+    const IMG_EXT = new Set(["jpg","jpeg","png","gif","webp","bmp","svg","ico","tiff","tif","heic","heif"]);
     (window as any).__tauri_drop = async (paths: string[]) => {
+      tauriDropHandled.current = true;
+      console.log("[tauri-drop] received paths:", paths);
       try {
         const resp = await fetch("/api/drop", {
           method: "POST",
@@ -296,17 +358,42 @@ export function InputBox({ onSend, onCancel, onCommand, agentMode, agentStatus, 
         const data = await resp.json();
         if (data.ok && data.files) {
           for (const f of data.files) {
-            const fa: FileAttachment = {
-              id: Math.random().toString(36).slice(2, 8),
-              file: new File([], f.name),
-              content: f.error ? `Error: ${f.error}` : f.textPreview || `[File path: ${f.path}]`,
-              loading: false,
-              error: f.error || null,
-            };
-            setFiles((prev) => [...prev, fa]);
+            if (f.error) {
+              setFiles((prev) => [...prev, {
+                id: Math.random().toString(36).slice(2, 8),
+                file: new File([], f.name),
+                content: `Error: ${f.error}`,
+                loading: false,
+                error: f.error,
+              }]);
+              continue;
+            }
+            const ext = f.name.split(".").pop()?.toLowerCase() || "";
+            if (IMG_EXT.has(ext)) {
+              // Fetch image data and route through QWEN Vision
+              try {
+                const imgResp = await fetch(`/api/file?path=${encodeURIComponent(f.path)}`);
+                if (imgResp.ok) {
+                  const blob = await imgResp.blob();
+                  const file = new File([blob], f.name, { type: blob.type || `image/${ext}` });
+                  addImage(file, f.path);
+                  console.log("[tauri-drop] image added via QWEN path:", f.path);
+                }
+              } catch (e) { console.error("[tauri-drop] fetch image failed:", e); }
+            } else {
+              setFiles((prev) => [...prev, {
+                id: Math.random().toString(36).slice(2, 8),
+                file: new File([], f.name),
+                content: f.textPreview || `[File path: ${f.path}]`,
+                loading: false,
+                error: null,
+              }]);
+            }
           }
         }
-      } catch {}
+      } catch (e) { console.error("[tauri-drop] failed:", e); }
+      // Reset flag after a short delay so subsequent drops work
+      setTimeout(() => { tauriDropHandled.current = false; }, 500);
     };
     return () => { delete (window as any).__tauri_drop; };
   }, []);
@@ -317,7 +404,7 @@ export function InputBox({ onSend, onCancel, onCommand, agentMode, agentStatus, 
     if (!f) return;
     for (let i = 0; i < f.length; i++) {
       const file = f[i];
-      if (file.type.startsWith("image/")) addImage(file);
+      if (isImageFile(file)) addImage(file);
       else addFile(file);
     }
     input.value = "";
@@ -441,7 +528,7 @@ export function InputBox({ onSend, onCancel, onCommand, agentMode, agentStatus, 
         </div>
       )}
 
-      <form class="input-box" onSubmit={handleSubmit} onDragOver={handleDragOver}>
+      <form class="input-box" onSubmit={handleSubmit} onDragOver={handleDragOver} onDrop={handleDrop}>
         <textarea
           ref={inputRef}
           class="input-box-textarea"

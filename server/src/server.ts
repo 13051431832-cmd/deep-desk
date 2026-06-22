@@ -1,6 +1,6 @@
-import { runCCBStream, spawnSession } from "./ccb";
+import { runCCBStream, spawnSession, setReceiptCache } from "./ccb";
 import type { CCBSession } from "./ccb";
-import { existsSync, mkdirSync } from "fs";
+import { existsSync, mkdirSync, statSync } from "fs";
 import { homedir, tmpdir } from "os";
 import { join, normalize } from "path";
 import { IS_BUN, readTextFile, writeFileData, fileExists, deleteFileData, readFileBytes, fileSizeSync, globSync, createFileResponse, moduleDir, serve, spawnProcess, readStreamToText, type ServeWebSocket } from "./runtime";
@@ -28,6 +28,62 @@ const SKILLS_DIR = join(homedir(), ".claude", "skills");
 const TOKEN_SERVER = "http://120.55.46.20:8080";
 const MCP_DEFAULTS = join(MODULE_DIR, "mcp-defaults.json");
 const MCP_DEFAULTS_REMOTE = "https://ccb-store.oss-cn-hangzhou.aliyuncs.com/deepdesk/mcp-defaults.json";
+const IS_MAC = process.platform === "darwin";
+const RESOURCE_DIR = process.env.DEEP_DESK_RESOURCES || MODULE_DIR;
+const RECEIPT_CACHE = join(homedir(), ".deepdesk", "receipt-cache.json");
+
+// ── App Store Receipt Validation (Mac only) ────────────────────────────
+// Called at startup. Validates the MAS receipt against Apple's servers
+// to determine if the user purchased the Pro In-App Purchase.
+// Result is cached to disk (24h TTL) and pushed to ccb's isPro().
+async function validateAppStoreReceipt() {
+  if (!IS_MAC) return;
+  try {
+    const receiptPath = join(RESOURCE_DIR, "..", "_MASReceipt", "receipt");
+    const receiptData = await readFileBytes(receiptPath);
+    const receiptB64 = Buffer.from(receiptData).toString("base64");
+    const sharedSecret = process.env.DEEP_DESK_APP_STORE_SHARED_SECRET || "";
+
+    // Try production first; Apple returns 21007 for sandbox receipts
+    for (const url of ["https://buy.itunes.apple.com/verifyReceipt", "https://sandbox.itunes.apple.com/verifyReceipt"]) {
+      try {
+        const resp = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            "receipt-data": receiptB64,
+            password: sharedSecret,
+            "exclude-old-transactions": true,
+          }),
+          signal: AbortSignal.timeout(15000),
+        });
+        const data = await resp.json() as any;
+        if (data.status === 21007) continue; // sandbox receipt → try sandbox URL
+
+        const inApp: any[] = data?.receipt?.in_app || [];
+        // Match IAP product ID configured in App Store Connect (currently "001")
+        const pro = inApp.some((iap: any) =>
+          (iap.product_id || "") === "001"
+        );
+
+        // Update in-memory cache (ccb.ts reads this synchronously)
+        setReceiptCache(pro);
+
+        // Persist to disk for next launch
+        mkdirSync(join(homedir(), ".deepdesk"), { recursive: true });
+        await writeFileData(RECEIPT_CACHE, JSON.stringify({ pro, validatedAt: Date.now() }));
+        return;
+      } catch (e: any) {
+        console.error(`[receipt] Apple verifyReceipt failed for ${url}: ${e?.message || e}`);
+      }
+    }
+    console.error("[receipt] All receipt validation URLs exhausted — user remains Free");
+  } catch (e: any) {
+    // No receipt file (dev build), or read error, or unexpected failure.
+    console.error(`[receipt] Receipt validation error: ${e?.message || e}`);
+    // Leave cache unset → isPro() returns false.
+  }
+}
 
 // Load persisted API keys from ~/.deepdesk.env on startup.
 // The POST /api/settings handler writes keys here, but they must be loaded
@@ -46,28 +102,56 @@ try {
   }
 } catch { /* file doesn't exist yet */ }
 
-// Copy default MCP config on first run (bundled or remote).
-// Run non-blocking so the HTTP server starts immediately — the Rust health check
-// has a 15s timeout, and CDN fetch can take just as long on slow networks.
-if (!existsSync(MCP_CONFIG_LOCAL)) {
-  (async () => {
+// ── Startup: receipt cache + MCP defaults ─────────────────────────────
+// Fire-and-forget so the HTTP server starts immediately (Rust health check
+// has a 15s timeout, and Apple API / CDN can be slow on cold networks).
+(async () => {
+  // 1. Mac: restore receipt cache from disk (makes isPro() correct immediately)
+  if (IS_MAC) {
     try {
-      const defaults = await readTextFile(MCP_DEFAULTS);
-      mkdirSync(join(homedir(), ".claude"), { recursive: true });
-      await writeFileData(MCP_CONFIG_LOCAL, defaults);
-    } catch {
-      // Free edition: download MCP defaults from CDN
+      const cacheRaw = await readTextFile(RECEIPT_CACHE);
+      const cache = JSON.parse(cacheRaw);
+      if (Date.now() - cache.validatedAt < 24 * 3600 * 1000) {
+        setReceiptCache(cache.pro);
+      }
+    } catch { /* no cache yet */ }
+    // Trigger background re-validation against Apple (don't await)
+    validateAppStoreReceipt();
+  }
+
+  // 2. MCP defaults: bundled first, then CDN (Pro users only)
+  if (existsSync(MCP_CONFIG_LOCAL)) return;
+  try {
+    const defaults = await readTextFile(MCP_DEFAULTS);
+    mkdirSync(join(homedir(), ".claude"), { recursive: true });
+    await writeFileData(MCP_CONFIG_LOCAL, defaults);
+    return;
+  } catch {
+    // Bundled MCP defaults not present (App Store build).
+    // Pro gate: Mac checks validated receipt cache, Windows checks license file.
+    let pro = false;
+    if (IS_MAC) {
       try {
-        const resp = await fetch(MCP_DEFAULTS_REMOTE, { signal: AbortSignal.timeout(15000) });
-        if (resp.ok) {
-          const defaults = await resp.text();
-          mkdirSync(join(homedir(), ".claude"), { recursive: true });
-          await writeFileData(MCP_CONFIG_LOCAL, defaults);
-        }
-      } catch { /* network unavailable, skip */ }
+        const cacheRaw = await readTextFile(RECEIPT_CACHE);
+        pro = JSON.parse(cacheRaw).pro;
+      } catch {}
+    } else {
+      try {
+        const licRaw = await readTextFile(LICENSE_FILE);
+        pro = !!JSON.parse(licRaw).pro;
+      } catch {}
     }
-  })();
-}
+    if (!pro) return;
+    try {
+      const resp = await fetch(MCP_DEFAULTS_REMOTE, { signal: AbortSignal.timeout(15000) });
+      if (resp.ok) {
+        const defaults = await resp.text();
+        mkdirSync(join(homedir(), ".claude"), { recursive: true });
+        await writeFileData(MCP_CONFIG_LOCAL, defaults);
+      }
+    } catch { /* network unavailable, skip */ }
+  }
+})();
 
 // ── Session management ────────────────────────────────────────────────
 // Sessions live by conversation ID. Multiple browser tabs share one session.
@@ -104,27 +188,119 @@ setInterval(() => {
 
 // ── Vision API ────────────────────────────────────────────────────────
 
-async function describeImage(imageBuffer: Uint8Array, mimeType: string): Promise<string> {
+async function callVisionAPI(imageBuffer: Uint8Array, mimeType: string, prompt: string, maxTokens = 1000): Promise<string> {
   const qwenKey = process.env.QWEN_API_KEY || process.env.DASHSCOPE_API_KEY || "";
-  if (!qwenKey) return "Vision API key not configured (set QWEN_API_KEY)";
+  if (!qwenKey) throw new Error("QWEN_API_KEY not configured");
   const b64 = Buffer.from(imageBuffer).toString("base64");
   const dataUrl = `data:${mimeType};base64,${b64}`;
   const resp = await fetch("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", {
     method: "POST",
     headers: { "Authorization": `Bearer ${qwenKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      model: "qwen-vl-plus",
+      model: "qwen3-vl-plus",
       messages: [{ role: "user", content: [
         { type: "image_url", image_url: { url: dataUrl } },
-        { type: "text", text: "请详细描述这张图片中的所有内容，包括文字、布局、颜色、图表数据等所有可见信息。用中文回答。" },
+        { type: "text", text: prompt },
       ]}],
-      max_tokens: 1000,
+      max_tokens: maxTokens,
     }),
-    signal: AbortSignal.timeout(30000),
+    signal: AbortSignal.timeout(45000),
   });
-  if (!resp.ok) { const err = await resp.text().catch(() => ""); return `Vision API error (${resp.status}): ${err.slice(0, 100)}`; }
+  if (!resp.ok) {
+    const err = await resp.text().catch(() => "");
+    console.error(`[vision] API error (${resp.status}): ${err.slice(0, 200)}`);
+    throw new Error(`Vision API error (${resp.status})`);
+  }
   const data = await resp.json() as any;
-  return data?.choices?.[0]?.message?.content || "No description returned";
+  const content = data?.choices?.[0]?.message?.content;
+  if (!content) {
+    console.error("[vision] Unexpected response:", JSON.stringify(data).slice(0, 500));
+    throw new Error("No description in Vision API response");
+  }
+  return content;
+}
+
+async function describeImage(imageBuffer: Uint8Array, mimeType: string): Promise<string> {
+  return callVisionAPI(imageBuffer, mimeType,
+    "请详细描述这张图片中的所有内容，包括文字、布局、颜色、图表数据等所有可见信息。用中文回答。");
+}
+
+// ── PDF → Image rendering ─────────────────────────────────────────────
+
+async function renderPdfToImage(pdfPath: string): Promise<{ buffer: Uint8Array; mimeType: string } | null> {
+  if (!IS_MAC) return null;
+  try {
+    const tmpDir = join(tmpdir(), "dd-pdf-" + Date.now().toString(36));
+    mkdirSync(tmpDir, { recursive: true });
+    const proc = spawnProcess("qlmanage", ["-t", "-s", "1200", "-o", tmpDir, pdfPath]);
+    const status = await proc.exited;
+    if (status !== 0) {
+      try { await deleteFileData(tmpDir); } catch {}
+      return null;
+    }
+    // qlmanage produces <filename>.pdf.png in the output dir
+    // Wait briefly for file write to complete
+    await new Promise(r => setTimeout(r, 200));
+    const files = globSync("*.pdf.png", { cwd: tmpDir, absolute: true });
+    if (files.length === 0) {
+      try { await deleteFileData(tmpDir); } catch {}
+      return null;
+    }
+    const buf = await readFileBytes(files[0]);
+    const outPath = join(VISION_UPLOAD_DIR, `pdf-${Date.now()}.png`);
+    await writeFileData(outPath, buf);
+    // Cleanup temp dir
+    try { for (const f of files) await deleteFileData(f); await deleteFileData(tmpDir); } catch {}
+    return { buffer: buf, mimeType: "image/png" };
+  } catch (e: any) {
+    console.error(`[pdf-render] Error rendering ${pdfPath}: ${e?.message || e}`);
+    return null;
+  }
+}
+
+// ── Invoice-specific vision extraction ─────────────────────────────────
+
+const INVOICE_PROMPT = `请识别这张发票/收据的所有关键信息，以严格的JSON格式输出：
+
+{
+  "发票号码": "发票代码+号码 或 发票号码字段的值（不是统一社会信用代码）",
+  "开票日期": "YYYY年MM月DD日格式",
+  "销售方名称": "销售方的公司全称",
+  "销售方税号": "销售方的统一社会信用代码/纳税人识别号",
+  "购买方名称": "购买方的公司全称",
+  "购买方税号": "购买方的统一社会信用代码/纳税人识别号",
+  "服务项目": "货物或应税劳务、服务名称（完整内容，含*号标记）",
+  "数量": "数量（数字）",
+  "不含税金额": "金额/不含税金额（数字）",
+  "税额": "税额（数字）",
+  "价税合计": "价税合计/含税总金额（数字）",
+  "税率": "税率百分比（如 6% 或 3%）",
+  "备注": "备注/订单号/行程信息"
+}
+
+重要识别规则：
+1. 销售方和购买方的区分：看"名称："标签旁边的第一个公司名是**销售方**。数电发票中销售方通常位于**表格上方左侧**，购买方在**右侧或下方**
+2. 发票号码 ≠ 统一社会信用代码。发票号码是较短的数字串（通常8-20位），信用代码是18位含字母数字的字符串
+3. 金额字段统一用数字格式（如 915.09），不要加¥符号或千分位逗号
+4. 空白字段用空字符串 ""
+5. 税率如 6% 保留百分号
+
+只输出JSON对象，不要markdown代码块包围，不要任何解释文字。`;
+
+async function describeInvoice(imageBuffer: Uint8Array, mimeType: string): Promise<any> {
+  const text = await callVisionAPI(imageBuffer, mimeType, INVOICE_PROMPT, 1500);
+  // Parse JSON from the response — strip markdown fences if present
+  let json = text.trim();
+  if (json.startsWith("```")) {
+    json = json.replace(/^```(?:json)?\s*\n?/, "").replace(/\n?```\s*$/, "");
+  }
+  try {
+    return JSON.parse(json.trim());
+  } catch {
+    // Fallback: return raw text if JSON parsing fails
+    console.error("[invoice] Failed to parse JSON from vision response:", json.slice(0, 300));
+    return { _raw: text, _error: "JSON parse failed" };
+  }
 }
 
 // ── Session helpers ───────────────────────────────────────────────────
@@ -142,7 +318,10 @@ function createConvSession(convId: string, ws: ServeWebSocket, opts?: { planMode
       }
     },
     onPermission(id, tool, message) {
-      broadcast(cs, JSON.stringify({ type: "permission_request", id, tool, message }));
+      broadcast(cs, JSON.stringify({
+        type: "permission_request", id, tool, message,
+        questions: cs.session.pendingQuestions || undefined,
+      }));
     },
     onTool(tool, id, status, detail) {
       broadcast(cs, JSON.stringify({ type: "tool_event", tool, id, status, detail }));
@@ -159,7 +338,10 @@ function createConvSession(convId: string, ws: ServeWebSocket, opts?: { planMode
     onStatus(message) {
       broadcast(cs, JSON.stringify({ type: "agent_status", status: "warming", note: message }));
     },
-  }, { bypassPermissions: cs.bypassPermissions, planMode: cs.planMode });
+    onContextStatus(status) {
+      broadcast(cs, JSON.stringify({ type: "context_status", status }));
+    },
+  }, { bypassPermissions: cs.bypassPermissions, planMode: cs.planMode, convId });
   cs.session = session;
   return cs;
 }
@@ -348,7 +530,10 @@ serve({
                 if (isPartial && text) broadcast(cs, JSON.stringify({ type: "text_delta", content: text, status: "streaming" }));
               },
               onPermission(id, tool, message) {
-                broadcast(cs, JSON.stringify({ type: "permission_request", id, tool, message }));
+                broadcast(cs, JSON.stringify({
+                  type: "permission_request", id, tool, message,
+                  questions: newSession.pendingQuestions || undefined,
+                }));
               },
               onTool(tool, id, status, detail) {
                 broadcast(cs, JSON.stringify({ type: "tool_event", tool, id, status, detail }));
@@ -362,7 +547,10 @@ serve({
               onError(error) {
                 broadcast(cs, JSON.stringify({ type: "error", message: error }));
               },
-            }, { bypassPermissions: cs.bypassPermissions, planMode: cs.planMode });
+              onContextStatus(status) {
+                broadcast(cs, JSON.stringify({ type: "context_status", status }));
+              },
+            }, { bypassPermissions: cs.bypassPermissions, planMode: cs.planMode, convId });
             cs.session = newSession;
             broadcast(cs, JSON.stringify({ type: "agent_status", status: "on", note: "Session restarted with new API key" }));
           }
@@ -469,25 +657,63 @@ serve({
               try {
                 const body = await req.json() as any;
                 const paths: string[] = body.paths || [];
+                console.error(`[drop] received ${paths.length} path(s): ${JSON.stringify(paths)}`);
                 const results = [];
-                for (const p of paths) {
-                  if (!(await fileExists(p))) { results.push({ path: p, error: "not found" }); continue; }
+                const MAX_FILES = 20;
+                for (const p of paths.slice(0, MAX_FILES)) {
+                  // Skip directories — only process individual files
+                  try {
+                    const st = statSync(p);
+                    if (st.isDirectory()) {
+                      console.error(`[drop] skipping directory: ${p}`);
+                      continue;
+                    }
+                  } catch { results.push({ path: p, error: "not found" }); continue; }
                   const name = p.split("/").pop() || p.split("\\").pop() || "file";
                   const size = fileSizeSync(p) || 0;
+                  const ext = name.split(".").pop()?.toLowerCase() || "";
+                  const isPdf = ext === "pdf";
                   let textPreview = "";
+                  let invoiceData: any = null;
                   try {
                     const buf = await readFileBytes(p);
                     const raw = new TextDecoder("utf-8", { fatal: true }).decode(buf);
                     const printable = raw.replace(/[^\x20-\x7E\x0A\x0D\x09\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]/g, "");
                     if (printable.length > raw.length * 0.7) textPreview = raw.slice(0, 5000);
+                    else if (isPdf) textPreview = "(PDF — attempting visual recognition...)";
                     else textPreview = "(binary file)";
-                  } catch { textPreview = "(binary file)"; }
-                  results.push({ path: p, name, size, textPreview });
+                  } catch {
+                    textPreview = isPdf ? "(PDF — attempting visual recognition...)" : "(binary file)";
+                  }
+                  // PDF → render to image → Qwen Vision invoice extraction
+                  if (isPdf && name.includes("发票")) {
+                    try {
+                      const rendered = await renderPdfToImage(p);
+                      if (rendered) {
+                        invoiceData = await describeInvoice(rendered.buffer, rendered.mimeType);
+                        textPreview = JSON.stringify(invoiceData, null, 2);
+                      }
+                    } catch (e: any) {
+                      console.error(`[drop] PDF invoice vision failed for ${name}: ${e?.message || e}`);
+                    }
+                  }
+                  results.push({ path: p, name, size, textPreview, invoice: invoiceData });
+                }
+                if (paths.length > MAX_FILES) {
+                  console.error(`[drop] truncated ${paths.length} paths to ${MAX_FILES}`);
                 }
                 return new Response(JSON.stringify({ ok: true, files: results }), {
                   headers: { "Content-Type": "application/json" },
                 });
               } catch (err: any) { return new Response(JSON.stringify({ error: err.message }), { status: 500 }); }
+            }
+
+            // Serve raw file by absolute path (used by Tauri drop handler for images)
+            if (url.pathname === "/api/file" && req.method === "GET") {
+              const filePath = url.searchParams.get("path");
+              if (!filePath) return new Response("Missing path", { status: 400 });
+              if (!(await fileExists(filePath))) return new Response("Not found", { status: 404 });
+              return createFileResponse(filePath);
             }
 
     	    // ── License API ─────────────────────────────────────────────────
@@ -599,16 +825,176 @@ serve({
           if (!file) return new Response(JSON.stringify({ error: "No image" }), { status: 400 });
           const buf = new Uint8Array(await file.arrayBuffer());
           const desc = await describeImage(buf, file.type || "image/png");
-          return new Response(JSON.stringify({ ok: true, description: desc }), { headers: { "Content-Type": "application/json" } });
+          const ts = Date.now();
+          const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+          const descPath = join(VISION_UPLOAD_DIR, `${ts}-${safeName}.txt`);
+          await writeFileData(descPath, new TextEncoder().encode(desc));
+          return new Response(JSON.stringify({ ok: true, description: desc, filePath: descPath }), { headers: { "Content-Type": "application/json" } });
         }
         const body = await req.json() as any;
         if (body.image) {
           const buf = Buffer.from(body.image, "base64");
           const desc = await describeImage(new Uint8Array(buf), body.mime || "image/png");
-          return new Response(JSON.stringify({ ok: true, description: desc }), { headers: { "Content-Type": "application/json" } });
+          const ts = Date.now();
+          const descPath = join(VISION_UPLOAD_DIR, `${ts}-image.txt`);
+          await writeFileData(descPath, new TextEncoder().encode(desc));
+          return new Response(JSON.stringify({ ok: true, description: desc, filePath: descPath }), { headers: { "Content-Type": "application/json" } });
         }
         return new Response(JSON.stringify({ error: "No image data" }), { status: 400 });
       } catch (err: any) { return new Response(JSON.stringify({ error: err.message }), { status: 500 }); }
+    }
+
+    // ── Direct image Q&A (bypasses CCB, QWEN Vision → DeepSeek chat) ─
+    if (url.pathname === "/api/chat-with-image" && req.method === "POST") {
+      try {
+        const formData = await req.formData();
+        const imageFile = formData.get("image") as File | null;
+        const question = (formData.get("question") as string) || "请描述这张图片";
+        if (!imageFile) return new Response(JSON.stringify({ error: "No image" }), { status: 400 });
+
+        const imageBuf = new Uint8Array(await imageFile.arrayBuffer());
+        const frontendDesc = (formData.get("description") as string)?.trim();
+        const desc = frontendDesc || await describeImage(imageBuf, imageFile.type || "image/png");
+
+        const apiKey = process.env.DEEPSEEK_API_KEY || process.env.OPENAI_API_KEY || "";
+        const baseUrl = process.env.OPENAI_BASE_URL || "https://api.deepseek.com";
+        if (!apiKey) return new Response(JSON.stringify({ error: "DeepSeek API key not configured" }), { status: 400 });
+
+        const chatResp = await fetch(`${baseUrl}/v1/chat/completions`, {
+          method: "POST",
+          headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "deepseek-chat",
+            messages: [
+              { role: "system", content: "你是一个图像分析助手。你会收到一张图片的详细文字描述，请基于描述回答用户的问题。用中文回答。" },
+              { role: "user", content: `[图片描述]\n${desc}\n\n用户问题：${question}` },
+            ],
+            max_tokens: 2000,
+          }),
+          signal: AbortSignal.timeout(60000),
+        });
+
+        if (!chatResp.ok) {
+          const err = await chatResp.text().catch(() => "");
+          return new Response(JSON.stringify({ error: `AI API error (${chatResp.status}): ${err.slice(0, 200)}` }), { status: 500 });
+        }
+
+        const chatData = await chatResp.json() as any;
+        const reply = chatData?.choices?.[0]?.message?.content || "No response";
+
+        return new Response(JSON.stringify({ ok: true, description: desc, reply }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      } catch (err: any) { return new Response(JSON.stringify({ error: err.message }), { status: 500 }); }
+    }
+
+    // ── Batch invoice processing ─────────────────────────────────────────
+    // Accept multiple files (images + PDFs) and return structured invoice data.
+    // Optional query param ?format=xlsx returns an Excel file.
+    if (url.pathname === "/api/invoice-batch" && req.method === "POST") {
+      try {
+        const formData = await req.formData();
+        const files: File[] = [];
+        for (const [_, v] of formData.entries()) {
+          if (v instanceof File) files.push(v);
+        }
+        if (files.length === 0) {
+          return new Response(JSON.stringify({ error: "No files provided" }), { status: 400 });
+        }
+
+        const results: any[] = [];
+        for (const f of files) {
+          const buf = new Uint8Array(await f.arrayBuffer());
+          const ext = f.name.split(".").pop()?.toLowerCase() || "";
+          const isPdf = ext === "pdf";
+          let invoice: any = null;
+          let error: string | null = null;
+
+          try {
+            if (isPdf) {
+              // Save temp PDF, render to image, then process
+              const pdfPath = join(VISION_UPLOAD_DIR, `batch-${Date.now()}-${f.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`);
+              await writeFileData(pdfPath, buf);
+              const rendered = await renderPdfToImage(pdfPath);
+              if (rendered) {
+                invoice = await describeInvoice(rendered.buffer, rendered.mimeType);
+              } else {
+                error = "Failed to render PDF to image";
+              }
+              await deleteFileData(pdfPath).catch(() => {});
+            } else {
+              invoice = await describeInvoice(buf, f.type || "image/png");
+            }
+          } catch (e: any) {
+            error = e?.message || "Unknown error";
+          }
+          results.push({ filename: f.name, invoice, error: error || undefined });
+        }
+
+        // Aggregate summary
+        const successCount = results.filter(r => r.invoice && !r.invoice._error).length;
+        let totalAmount = 0;
+        let totalTax = 0;
+        for (const r of results) {
+          if (r.invoice && !r.invoice._error) {
+            const amount = parseFloat(r.invoice.价税合计);
+            const tax = parseFloat(r.invoice.税额);
+            if (!isNaN(amount)) totalAmount += amount;
+            if (!isNaN(tax)) totalTax += tax;
+          }
+        }
+
+        const wantXlsx = url.searchParams.get("format") === "xlsx";
+
+        // Generate Excel if requested (simple CSV for now, xlsx generation needs a library)
+        if (wantXlsx) {
+          // Build a CSV which Excel can open
+          let csv = "\uFEFF序号,文件名,发票号码,开票日期,销售方,购买方,服务项目,不含税金额,税额,价税合计,税率,备注,识别状态\n";
+          results.forEach((r, i) => {
+            const inv = r.invoice && !r.invoice._error ? r.invoice : {};
+            const status = r.error ? "失败" : (r.invoice?._error ? "解析异常" : "成功");
+            csv += [
+              i + 1,
+              `"${(r.filename || "").replace(/"/g, '""')}"`,
+              `"${(inv.发票号码 || "").replace(/"/g, '""')}"`,
+              `"${(inv.开票日期 || "").replace(/"/g, '""')}"`,
+              `"${(inv.销售方名称 || "").replace(/"/g, '""')}"`,
+              `"${(inv.购买方名称 || "").replace(/"/g, '""')}"`,
+              `"${(inv.服务项目 || "").replace(/"/g, '""')}"`,
+              inv.不含税金额 || "",
+              inv.税额 || "",
+              inv.价税合计 || "",
+              `"${(inv.税率 || "").replace(/"/g, '""')}"`,
+              `"${(inv.备注 || "").replace(/"/g, '""')}"`,
+              status,
+            ].join(",") + "\n";
+          });
+          // Add summary row
+          csv += `,,,,,,合计,,${results.reduce((s, r) => { const a = parseFloat(r.invoice?.不含税金额); return s + (isNaN(a) ? 0 : a); }, 0).toFixed(2)},${totalTax.toFixed(2)},${totalAmount.toFixed(2)},,,`;
+
+          const csvPath = join(VISION_UPLOAD_DIR, `invoice-batch-${Date.now()}.csv`);
+          await writeFileData(csvPath, csv);
+          const resp = new Response(csv, {
+            headers: {
+              "Content-Type": "text/csv; charset=utf-8",
+              "Content-Disposition": `attachment; filename="invoice-batch.csv"`,
+            },
+          });
+          return resp;
+        }
+
+        // Default: JSON response
+        return new Response(JSON.stringify({
+          ok: true,
+          total: files.length,
+          success: successCount,
+          totalAmount: totalAmount.toFixed(2),
+          totalTax: totalTax.toFixed(2),
+          results,
+        }), { headers: { "Content-Type": "application/json" } });
+      } catch (err: any) {
+        return new Response(JSON.stringify({ error: err.message }), { status: 500 });
+      }
     }
 
     const rawPath = url.pathname === "/" ? "/index.html" : url.pathname;
@@ -762,7 +1148,10 @@ serve({
                 if (isPartial && text) broadcast(cs, JSON.stringify({ type: "text_delta", content: text, status: "streaming" }));
               },
               onPermission(id, tool, message) {
-                broadcast(cs, JSON.stringify({ type: "permission_request", id, tool, message }));
+                broadcast(cs, JSON.stringify({
+                  type: "permission_request", id, tool, message,
+                  questions: newSession.pendingQuestions || undefined,
+                }));
               },
               onTool(tool, id, status, detail) {
                 broadcast(cs, JSON.stringify({ type: "tool_event", tool, id, status, detail }));
@@ -776,7 +1165,10 @@ serve({
               onError(error) {
                 broadcast(cs, JSON.stringify({ type: "error", message: error }));
               },
-            }, { bypassPermissions: cs.bypassPermissions, planMode: cs.planMode });
+              onContextStatus(status) {
+                broadcast(cs, JSON.stringify({ type: "context_status", status }));
+              },
+            }, { bypassPermissions: cs.bypassPermissions, planMode: cs.planMode, convId });
             cs.session = newSession;
             broadcast(cs, JSON.stringify({ type: "agent_status", status: "on", note: `Bypass ${cs.bypassPermissions ? "enabled" : "disabled"}` }));
           }
@@ -833,7 +1225,7 @@ serve({
       // ── Permission reply ───────────────────────────────────────
       if (msg.type === "permission_reply") {
         ws.send(JSON.stringify({ type: "text_delta", content: "", status: "thinking" }));
-        if (cs) { cs.session.sendPermission(!!msg.approved); return; }
+        if (cs) { cs.session.sendPermission(!!msg.approved, msg.answer || undefined); return; }
         const approveText = msg.approved ? "I approve. Please proceed with the previous request." : "I deny. Do not proceed with the previous request.";
         try {
           const result = await runCCBStream(

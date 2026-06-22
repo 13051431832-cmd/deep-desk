@@ -1,6 +1,6 @@
 [package]
 name = "deep-desk"
-version = "1.0.12"
+version = "1.0.22"
 description = "Deep Desk — AI coding assistant desktop app"
 authors = []
 edition = "2021"
@@ -27,6 +27,10 @@ tokio = { version = "1", features = ["process", "time"] }
 anyhow = "1"
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 open = "5"
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2"
+block = "0.1"
+
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.29", features = ["signal"] }
 
