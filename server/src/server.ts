@@ -188,7 +188,7 @@ setInterval(() => {
 
 // ── Vision API ────────────────────────────────────────────────────────
 
-async function callVisionAPI(imageBuffer: Uint8Array, mimeType: string, prompt: string, maxTokens = 1000): Promise<string> {
+async function callVisionAPI(imageBuffer: Uint8Array, mimeType: string, prompt: string, maxTokens = 1000, model = "qwen3-vl-plus"): Promise<string> {
   const qwenKey = process.env.QWEN_API_KEY || process.env.DASHSCOPE_API_KEY || "";
   if (!qwenKey) throw new Error("QWEN_API_KEY not configured");
   const b64 = Buffer.from(imageBuffer).toString("base64");
@@ -197,7 +197,7 @@ async function callVisionAPI(imageBuffer: Uint8Array, mimeType: string, prompt: 
     method: "POST",
     headers: { "Authorization": `Bearer ${qwenKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      model: "qwen3-vl-plus",
+      model,
       messages: [{ role: "user", content: [
         { type: "image_url", image_url: { url: dataUrl } },
         { type: "text", text: prompt },
@@ -270,37 +270,33 @@ async function renderPdfToImage(pdfPath: string): Promise<{ buffer: Uint8Array; 
 
 // ── Invoice-specific vision extraction ─────────────────────────────────
 
-const INVOICE_PROMPT = `请识别这张发票/收据的所有关键信息，以严格的JSON格式输出：
-
-{
-  "发票号码": "发票代码+号码 或 发票号码字段的值（不是统一社会信用代码）",
-  "开票日期": "YYYY年MM月DD日格式",
-  "销售方名称": "销售方的公司全称",
-  "销售方税号": "销售方的统一社会信用代码/纳税人识别号",
-  "购买方名称": "购买方的公司全称",
-  "购买方税号": "购买方的统一社会信用代码/纳税人识别号",
-  "服务项目": "货物或应税劳务、服务名称（完整内容，含*号标记）",
-  "数量": "数量（数字）",
-  "不含税金额": "金额/不含税金额（数字）",
-  "税额": "税额（数字）",
-  "价税合计": "价税合计/含税总金额（数字）",
-  "税率": "税率百分比（如 6% 或 3%）",
-  "备注": "备注/订单号/行程信息"
-}
-
-重要识别规则：
-1. 销售方和购买方的区分：看"名称："标签旁边的第一个公司名是**销售方**。数电发票中销售方通常位于**表格上方左侧**，购买方在**右侧或下方**
-2. 发票号码 ≠ 统一社会信用代码。发票号码是较短的数字串（通常8-20位），信用代码是18位含字母数字的字符串
-3. 金额字段统一用数字格式（如 915.09），不要加¥符号或千分位逗号
-4. 空白字段用空字符串 ""
-5. 税率如 6% 保留百分号
-
-只输出JSON对象，不要markdown代码块包围，不要任何解释文字。`;
+const INVOICE_PROMPT = `请识别这张发票/收据的所有关键信息，以严格的JSON格式输出。只输出JSON对象，不要markdown代码块包围，不要任何解释文字。`;
 
 function isInvoiceEmpty(inv: any): boolean {
   if (!inv || inv._error) return true;
-  const total = inv["价税合计"];
+  const total = inv["价税合计"] || inv["发票金额"];
   return !total || total === 0 || total === "0" || total === "0.00";
+}
+
+// Map qwen-vl-ocr native field names to canonical invoice fields
+function normalizeInvoice(raw: any): any {
+  if (!raw || raw._error) return raw;
+  return {
+    发票号码: raw["发票号码"] || "",
+    开票日期: raw["开票日期"] || "",
+    销售方名称: raw["销售方名称"] || "",
+    销售方税号: raw["销售方税号"] || "",
+    购买方名称: raw["购买方名称"] || raw["受票方名称"] || "",
+    购买方税号: raw["购买方税号"] || raw["受票方税号"] || "",
+    服务项目: raw["服务项目"] || (raw["发票详单"]?.map((item: any) => item["货物或应税劳务、服务名称"] || "").join("; ") || ""),
+    数量: raw["数量"] || 0,
+    不含税金额: Number(raw["不含税金额"]) || 0,
+    税额: Number(raw["税额"] || raw["发票税额"]) || 0,
+    价税合计: Number(raw["价税合计"] || raw["发票金额"]) || 0,
+    税率: raw["税率"] || (raw["发票详单"]?.[0]?.["税率"] || ""),
+    备注: raw["备注"] || "",
+    _raw: raw,  // preserve full OCR output for reference
+  };
 }
 
 async function describeInvoice(imageBuffer: Uint8Array, mimeType: string): Promise<any> {
@@ -309,16 +305,15 @@ async function describeInvoice(imageBuffer: Uint8Array, mimeType: string): Promi
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     if (attempt > 0) {
-      // Small jittered delay between retries
       await new Promise(r => setTimeout(r, 300 + Math.random() * 400));
     }
-    const text = await callVisionAPI(imageBuffer, mimeType, INVOICE_PROMPT, 1500);
+    const text = await callVisionAPI(imageBuffer, mimeType, INVOICE_PROMPT, 1500, "qwen-vl-ocr-latest");
     let json = text.trim();
     if (json.startsWith("```")) {
       json = json.replace(/^```(?:json)?\s*\n?/, "").replace(/\n?```\s*$/, "");
     }
     try {
-      lastResult = JSON.parse(json.trim());
+      lastResult = normalizeInvoice(JSON.parse(json.trim()));
     } catch {
       console.error("[invoice] Failed to parse JSON from vision response:", json.slice(0, 300));
       lastResult = { _raw: text, _error: "JSON parse failed" };
@@ -330,7 +325,6 @@ async function describeInvoice(imageBuffer: Uint8Array, mimeType: string): Promi
     }
   }
 
-  // All retries exhausted — return whatever we got last
   if (!isInvoiceEmpty(lastResult)) {
     console.log(`[invoice] Succeeded on final attempt`);
   }
