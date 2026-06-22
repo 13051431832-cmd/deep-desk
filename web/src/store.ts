@@ -18,6 +18,12 @@ export interface PermissionRequest {
   id: string;
   tool: string;
   message: string;
+  questions?: Array<{
+    question: string;
+    header: string;
+    options: Array<{ label: string; description: string }>;
+    multiSelect?: boolean;
+  }>;
 }
 
 export interface Conversation {
@@ -33,6 +39,7 @@ export interface Conversation {
   planMode: boolean;
   bypassPermissions: boolean;
   reconnectAttempts: number;
+  contextStatus: "idle" | "summarizing" | "restarting" | "done";
 }
 
 const MAX_RECONNECT_ATTEMPTS = 5;
@@ -130,6 +137,7 @@ export async function loadSessions(port: number): Promise<boolean> {
           planMode: convData.planMode || false,
           bypassPermissions: convData.bypassPermissions !== false,
           reconnectAttempts: 0,
+          contextStatus: "idle",
         });
       } catch {}
     }
@@ -176,6 +184,7 @@ function loadFromLocalStorage(port: number): boolean {
         planMode: sc.planMode || false,
         bypassPermissions: sc.bypassPermissions !== false,
         reconnectAttempts: 0,
+        contextStatus: "idle",
       };
       // Migrate to server
       saveConvToServer(conv).catch(() => {});
@@ -233,6 +242,7 @@ export function newConversation(port: number): string {
     agentMode: false, agentStatus: "off",
     planMode: false, bypassPermissions: true,
     reconnectAttempts: 0,
+    contextStatus: "idle",
   };
   conversations.value = [...conversations.value, conv];
   activeConvId.value = id;
@@ -416,6 +426,7 @@ function handleConvEvent(convId: string, event: any) {
           id: event.id,
           tool: event.tool,
           message: event.message,
+          questions: event.questions || undefined,
         },
         status: "Permission required",
       });
@@ -496,6 +507,19 @@ function handleConvEvent(convId: string, event: any) {
       if (event.status !== "warming") {
         const c = conversations.value.find((c1) => c1.id === convId);
         if (c && (c as any).__warmTimeout) { clearTimeout((c as any).__warmTimeout); delete (c as any).__warmTimeout; }
+      }
+      break;
+
+    case "context_status":
+      updateConv(convId, { contextStatus: event.status });
+      // Auto-clear to idle after 5s when done
+      if (event.status === "done") {
+        setTimeout(() => {
+          const c = conversations.value.find((c1) => c1.id === convId);
+          if (c && c.contextStatus === "done") {
+            updateConv(convId, { contextStatus: "idle" });
+          }
+        }, 5000);
       }
       break;
 
@@ -605,11 +629,11 @@ export function sendMessage(convId: string, text: string) {
   }
 }
 
-// Approve/deny permission
-export function replyPermission(convId: string, approved: boolean) {
+// Approve/deny permission. Pass `answer` for AskUserQuestion responses.
+export function replyPermission(convId: string, approved: boolean, answer?: Record<string, string>) {
   const conv = conversations.value.find((c) => c.id === convId);
-  if (!conv?.ws) return;
-  conv.ws.send(JSON.stringify({ type: "permission_reply", approved }));
+  if (!conv?.ws || !conv.pendingPermission) return; // guard: no pending permission → ignore duplicate clicks
+  conv.ws.send(JSON.stringify({ type: "permission_reply", approved, answer }));
   updateConv(convId, { pendingPermission: null, status: "Thinking..." });
 }
 

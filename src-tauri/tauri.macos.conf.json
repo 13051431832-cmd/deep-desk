@@ -4,7 +4,6 @@
       "../server/": "server/",
       "../web/dist/": "server/web/dist/",
       "../package.json": "package.json",
-      "../bun.lock": "bun.lock",
       "../node_modules/ws/": "node_modules/ws/",
       "../node_modules/strip-ansi/": "node_modules/strip-ansi/",
       "binaries/bun-darwin-aarch64/bun": "binaries/bun-darwin-aarch64/bun"

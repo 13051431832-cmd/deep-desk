@@ -86,6 +86,9 @@ const translations: Record<string, Record<Lang, string>> = {
   "perm.title":            { zh: "需要授权", en: "Permission Required" },
   "perm.approve":          { zh: "✓ 批准", en: "✓ Approve" },
   "perm.deny":             { zh: "✗ 拒绝", en: "✗ Deny" },
+  "perm.questionTitle":    { zh: "请回答", en: "Questions" },
+  "perm.submit":           { zh: "✓ 提交", en: "✓ Submit" },
+  "perm.multiSelect":      { zh: "可多选", en: "Multi-select" },
 
   // Commands
   "cmd.agentUsage":        { zh: "**/agent** — 用法：\n- `/agent on` — 开启 Agent 模式\n- `/agent off` — 关闭 Agent 模式", en: "**/agent** — Usage:\n- `/agent on` — Enable Agent Mode\n- `/agent off` — Disable Agent Mode" },
@@ -144,10 +147,12 @@ const translations: Record<string, Record<Lang, string>> = {
   // Misc
   "misc.emptyHint":        { zh: "点击上方卡片快速开始，或在输入框输入你的问题", en: "Click a card above to start, or type your question below" },
   "misc.emptyChat":        { zh: "Deep Desk", en: "Deep Desk" },
-  "misc.emptyDesc":        { zh: "deepseek驱动的ClaudeY助手", en: "ClaudeY assistant powered by DeepSeek" },
+  "misc.emptyDesc":        { zh: "你的 AI 编程搭档", en: "Your AI coding partner" },
   "misc.upgrade":          { zh: "升级到 Pro", en: "Upgrade to Pro" },
   "misc.update":           { zh: "更新 v{version}", en: "Update v{version}" },
   "misc.reconnecting":     { zh: "⟳ 重连中...", en: "⟳ Reconnecting..." },
+  "misc.summarizing":     { zh: "⟳ 压缩上下文中...", en: "⟳ Summarizing context..." },
+  "misc.restarting":      { zh: "⟳ 重启会话中...", en: "⟳ Restarting session..." },
 
   // Language switcher
   "lang.switch":           { zh: "EN", en: "中文" },

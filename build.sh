@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Deep Desk — Tauri build script
-# Usage: bash build.sh [macos|macos-x64|windows|all]
+# Usage: bash build.sh [macos|macos-x64|macos-free|macos-appstore|windows|all]
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -16,7 +16,6 @@ gen_macos_config() {
       "../server/": "server/",
       "../web/dist/": "server/web/dist/",
       "../package.json": "package.json",
-      "../bun.lock": "bun.lock",
       "../node_modules/ws/": "node_modules/ws/",
       "../node_modules/strip-ansi/": "node_modules/strip-ansi/",
       "${bun_src}": "${bun_src}"
@@ -78,11 +77,90 @@ ensure_bun() {
 # "damaged" by Gatekeeper on macOS 10.15+.
 ensure_signing_identity() {
   if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
-    export APPLE_SIGNING_IDENTITY="-"
-    echo "  Using ad-hoc signing (no Apple Developer certificate)"
+    local detected
+    if [ "${APP_STORE_BUILD:-}" = "1" ]; then
+      # App Store: must use Apple Distribution certificate
+      detected=$(security find-identity -v -p macappstore 2>/dev/null | grep -o '"Apple Distribution: [^"]*"' | head -1 | tr -d '"')
+    else
+      # Direct distribution (DMG): must use Developer ID Application
+      # Apple Distribution cert is ONLY valid for App Store submission;
+      # using it for DMG causes Gatekeeper rejection on macOS 26+.
+      detected=$(security find-identity -v 2>/dev/null | grep -o '"Developer ID Application: [^"]*"' | head -1 | tr -d '"')
+    fi
+    if [ -n "$detected" ]; then
+      export APPLE_SIGNING_IDENTITY="$detected"
+      echo "  Using auto-detected signing identity: $detected"
+    else
+      export APPLE_SIGNING_IDENTITY="-"
+      echo "  Using ad-hoc signing (no Apple Developer certificate)"
+    fi
   else
     echo "  Using signing identity: $APPLE_SIGNING_IDENTITY"
   fi
+}
+
+# Auto-detect Installer identity (for .pkg signing)
+ensure_installer_identity() {
+  if [ -z "${APPLE_INSTALLER_IDENTITY:-}" ]; then
+    local detected
+    detected=$(security find-identity -v -p macappstore 2>/dev/null | grep -o '"3rd Party Mac Developer Installer: [^"]*"' | head -1 | tr -d '"')
+    if [ -n "$detected" ]; then
+      export APPLE_INSTALLER_IDENTITY="$detected"
+    fi
+  fi
+}
+
+# ── Re-sign nested binaries for notarization ──────────────────────────
+# Tauri signs the main executable and .app bundle, but embedded binaries
+# (bun, node) need explicit signing with hardened runtime for notarization.
+fixup_bundle_signing() {
+  local bundle="$1"      # Absolute path to .app bundle
+  local binary="$2"      # Relative path inside Resources to the binary
+  if [ "$APPLE_SIGNING_IDENTITY" = "-" ] || [ -z "$APPLE_SIGNING_IDENTITY" ]; then
+    echo "  Skipping nested binary signing (ad-hoc)"
+    return 0
+  fi
+  local nested="$bundle/Contents/Resources/$binary"
+  if [ ! -f "$nested" ]; then
+    echo "  Nested binary not found: $nested"
+    return 0
+  fi
+  echo "  Signing $binary with hardened runtime..."
+  codesign --remove-signature "$nested" 2>/dev/null || true
+  codesign -f -s "$APPLE_SIGNING_IDENTITY" --timestamp -o runtime "$nested" || {
+    echo "  ❌ Failed to sign $binary"
+    return 1
+  }
+  # Re-sign main executable (previous signature invalidated by bundle change)
+  local main_exe="$bundle/Contents/MacOS/deep-desk"
+  codesign -f -s "$APPLE_SIGNING_IDENTITY" --timestamp -o runtime "$main_exe" || true
+  codesign -f -s "$APPLE_SIGNING_IDENTITY" --timestamp -o runtime "$bundle" || true
+  echo "  ✓ $binary signed + bundle re-signed"
+}
+
+# Sign nested binary, then re-create DMG + tar.gz for updater
+sign_and_repackage() {
+  local target="$1"          # e.g., aarch64-apple-darwin
+  local binary_path="$2"     # e.g., binaries/bun-darwin-aarch64/bun
+  local app="$SCRIPT_DIR/src-tauri/target/$target/release/bundle/macos/Deep Desk.app"
+  local dmg_dir="$SCRIPT_DIR/src-tauri/target/$target/release/bundle/dmg"
+
+  fixup_bundle_signing "$app" "$binary_path"
+
+  # Remove old DMG and re-create
+  local old_dmg=$(ls "$dmg_dir"/*.dmg 2>/dev/null | head -1)
+  local dmg_name="${old_dmg##*/}"
+  [ -z "$dmg_name" ] && dmg_name="Deep Desk_${target%%-*}.dmg"
+  echo "  Re-creating DMG..."
+  rm -f "$dmg_dir/$dmg_name"
+  hdiutil create -volname "Deep Desk" -srcfolder "$app" -ov -format UDZO "$dmg_dir/$dmg_name" 2>&1 | tail -1
+
+  # Re-create tar.gz for updater
+  local tar_path="$SCRIPT_DIR/src-tauri/target/$target/release/bundle/macos/Deep Desk.app.tar.gz"
+  echo "  Re-creating tar.gz for updater..."
+  rm -f "$tar_path"
+  tar czf "$tar_path" -C "$(dirname "$app")" "Deep Desk.app" 2>&1
+  echo "  ✓ tar.gz re-created"
 }
 
 # ── Notarization ──────────────────────────────────────────────────────
@@ -138,6 +216,7 @@ case "$TARGET" in
     fi
     ensure_signing_identity
     cargo tauri build --target aarch64-apple-darwin 2>&1 | grep -E "(Finished|Error|Bundling|update)" || true
+    sign_and_repackage "aarch64-apple-darwin" "binaries/bun-darwin-aarch64/bun"
     echo "  ✓ macOS arm64 build complete"
     ls -lh "$SCRIPT_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/"*.dmg 2>/dev/null || echo "  (DMG in bundle/dmg/)"
     ls -lh "$SCRIPT_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/"*.tar.gz 2>/dev/null || true
@@ -157,6 +236,7 @@ case "$TARGET" in
     rm -rf "$PLUGINS_DIR/.git" 2>/dev/null || true
     ensure_signing_identity
     cargo tauri build --target x86_64-apple-darwin 2>&1 | grep -E "(Finished|Error|Bundling)" || true
+    sign_and_repackage "x86_64-apple-darwin" "binaries/bun-darwin-x64/bun"
     echo "  ✓ macOS x64 build complete"
     ls -lh "$SCRIPT_DIR/src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/"*.dmg 2>/dev/null || echo "  (DMG in bundle/dmg/)"
     notarize_dmg "$SCRIPT_DIR/src-tauri/target/x86_64-apple-darwin/release/bundle/dmg"
@@ -185,11 +265,205 @@ case "$TARGET" in
     fi
     ensure_signing_identity
     cargo tauri build --target aarch64-apple-darwin 2>&1 | grep -E "(Finished|Error|Bundling|update)" || true
+    sign_and_repackage "aarch64-apple-darwin" "binaries/bun-darwin-aarch64/bun"
     echo "  ✓ macOS free edition build complete"
     ls -lh "$SCRIPT_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/"*.dmg 2>/dev/null || echo "  (DMG in bundle/dmg/)"
     ls -lh "$SCRIPT_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/"*.tar.gz 2>/dev/null || true
     ls -lh "$SCRIPT_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/"*.sig 2>/dev/null || true
     notarize_dmg "$SCRIPT_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg"
+    ;;
+  macos-appstore)
+    # App Store build: bundles Node.js instead of bun (bun links libicucore — non-public API).
+    # Pre-compiles TypeScript server to JavaScript for Node.js compatibility.
+    echo "  App Store build: bundling Node.js (no bun), entitlements.appstore.plist"
+
+    # Download Node.js for macOS arm64
+    NODE_DIR="$SCRIPT_DIR/src-tauri/binaries/node-darwin-arm64"
+    mkdir -p "$NODE_DIR"
+    NODE_VERSION="v22.12.0"
+    NODE_TARBALL="node-${NODE_VERSION}-darwin-arm64.tar.gz"
+    if [ ! -x "$NODE_DIR/node" ]; then
+      echo "  Downloading Node.js ${NODE_VERSION} for macOS arm64..."
+      curl -fsSL "https://nodejs.org/dist/${NODE_VERSION}/${NODE_TARBALL}" -o "/tmp/${NODE_TARBALL}"
+      tar xzf "/tmp/${NODE_TARBALL}" -C /tmp/
+      mv "/tmp/node-${NODE_VERSION}-darwin-arm64/bin/node" "$NODE_DIR/node"
+      rm -rf "/tmp/node-${NODE_VERSION}-darwin-arm64" "/tmp/${NODE_TARBALL}"
+      chmod +x "$NODE_DIR/node"
+      echo "  ✓ Node.js downloaded"
+    else
+      echo "  ✓ Node.js already present"
+    fi
+
+    # Pre-compile server TypeScript → JavaScript (bundle includes ws dependency)
+    echo "  Compiling server TypeScript..."
+    SERVER_DIST="$SCRIPT_DIR/server/dist"
+    mkdir -p "$SERVER_DIST"
+    cd "$SCRIPT_DIR"
+    # Bundle server.ts + ccb.ts + runtime.ts into a single JS file for Node.js
+    bun build server/src/server.ts --outdir="$SERVER_DIST" --target=node --packages=bundle 2>&1 || {
+      echo "  ⚠️ bun build failed, trying per-file compilation..."
+      bun build server/src/server.ts --outfile="$SERVER_DIST/server.js" --target=node --packages=bundle 2>&1
+    }
+    echo "  ✓ Server compiled"
+
+    # Ensure ws is available (bun build should bundle it, but confirm)
+    if [ ! -f "$SERVER_DIST/server.js" ]; then
+      echo "  Error: server.js not produced by bun build"
+      exit 1
+    fi
+
+    gen_macos_config "aarch64" "binaries/node-darwin-arm64/node"
+    # Override resources: Node.js binary + compiled server, NO bun
+    cat > "$SCRIPT_DIR/src-tauri/tauri.macos.conf.json" << JSONEOF
+{
+  "bundle": {
+    "resources": {
+      "../server/dist/": "server/dist/",
+      "../web/dist/": "server/web/dist/",
+      "../package.json": "package.json",
+      "../node_modules/ws/": "node_modules/ws/",
+      "binaries/node-darwin-arm64/node": "binaries/node-darwin-arm64/node"
+    },
+    "macOS": {
+      "entitlements": "./entitlements.appstore.plist"
+    }
+  }
+}
+JSONEOF
+    echo "  Config: macOS App Store (entitlements.appstore.plist)"
+
+    # Bundle superpowers plugin for offline skills
+    PLUGINS_DIR="$SCRIPT_DIR/server/bundled-plugins/claude-plugins-official"
+    if [ ! -d "$PLUGINS_DIR" ]; then
+      echo "  Cloning skills plugin repo..."
+      mkdir -p "$(dirname "$PLUGINS_DIR")"
+      git clone --depth 1 https://github.com/anthropics/claude-plugins-official.git "$PLUGINS_DIR" 2>/dev/null || echo "  ⚠️ Failed to clone plugins repo (build will continue without bundled skills)"
+    fi
+    rm -rf "$PLUGINS_DIR/.git" 2>/dev/null || true
+
+    export APP_STORE_BUILD="1"
+    export APP_STORE_SHARED_SECRET="${APP_STORE_SHARED_SECRET:-}"
+    if [ -z "$APP_STORE_SHARED_SECRET" ]; then
+      echo "  ⚠️ APP_STORE_SHARED_SECRET not set — IAP receipt validation will NOT work"
+    fi
+    ensure_signing_identity
+    ensure_installer_identity
+    cargo tauri build --target aarch64-apple-darwin 2>&1 | grep -E "(Finished|Error|Bundling|update|warning|error\[)" || true
+    if [ ${PIPESTATUS[0]} -ne 0 ]; then
+      echo "  ❌ cargo tauri build failed (exit code ${PIPESTATUS[0]})"
+      exit 1
+    fi
+
+    # Force re-sign with explicit entitlements. Three necessary fixes:
+    # 1. Embed provisioning profile (required for TestFlight / App Store)
+    # 2. Merge profile entitlements → main binary gets application-identifier
+    # 3. Nested binaries (node) get sandbox-only — NO application-identifier
+    BUNDLE_DIR="$SCRIPT_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/macos"
+    APP="$BUNDLE_DIR/Deep Desk.app"
+    ENTITLEMENTS="$SCRIPT_DIR/src-tauri/entitlements.appstore.plist"
+    NODE_ENTITLEMENTS="/tmp/node-entitlements-$$.plist"
+    MERGED_ENTITLEMENTS="/tmp/merged-entitlements-$$.plist"
+    # Profile path: check env var first, then project dir, then system location
+    PROFILE="${APP_STORE_PROFILE_PATH:-}"
+    [ -z "$PROFILE" ] && PROFILE="$SCRIPT_DIR/src-tauri/Deep_Desk_App_Store.provisionprofile"
+    [ ! -f "$PROFILE" ] && PROFILE="$HOME/Library/MobileDevice/Provisioning Profiles/Deep_Desk_App_Store.provisionprofile"
+    cat > "$NODE_ENTITLEMENTS" << 'ENTEOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+</dict>
+</plist>
+ENTEOF
+    if [ "$APPLE_SIGNING_IDENTITY" != "-" ] && [ -n "$APPLE_SIGNING_IDENTITY" ]; then
+      echo "  Re-signing with explicit entitlements..."
+
+      # 1. Remove Node.js signature (its upstream cert is expired, and it lacks sandbox)
+      codesign --remove-signature "$APP/Contents/Resources/binaries/node-darwin-arm64/node" 2>/dev/null || true
+
+      # 2. Embed provisioning profile (required by App Store / TestFlight)
+      if [ -f "$PROFILE" ]; then
+        cp "$PROFILE" "$APP/Contents/embedded.provisionprofile"
+        # Merge profile entitlements (application-identifier, team-identifier) + custom entitlements
+        if ! security cms -D -i "$PROFILE" 2>/dev/null | plutil -extract Entitlements xml1 - -o "$MERGED_ENTITLEMENTS" 2>/dev/null; then
+          echo "  ❌ Failed to extract entitlements from provisioning profile"
+          exit 1
+        fi
+        # PlistBuddy -c "Merge" doesn't handle paths with spaces — copy to tmp first
+        ENTITLEMENTS_TMP="/tmp/app-entitlements-$$.plist"
+        cp "$ENTITLEMENTS" "$ENTITLEMENTS_TMP"
+        if ! /usr/libexec/PlistBuddy -c "Merge $ENTITLEMENTS_TMP" "$MERGED_ENTITLEMENTS" 2>/dev/null; then
+          echo "  ❌ Failed to merge entitlements"
+          rm -f "$ENTITLEMENTS_TMP"
+          exit 1
+        fi
+        rm -f "$ENTITLEMENTS_TMP"
+        echo "  ✓ Profile embedded + entitlements merged"
+      else
+        cp "$ENTITLEMENTS" "$MERGED_ENTITLEMENTS"
+        echo "  ⚠️ Provisioning profile not found at $PROFILE — signing without app-identifier"
+      fi
+
+      # 3. Sign nested binaries WITHOUT application-identifier (inherits from parent)
+      #    NOTE: no --deep on the .app — that would re-sign node with application-identifier
+      codesign -f -s "$APPLE_SIGNING_IDENTITY" --entitlements "$NODE_ENTITLEMENTS" --timestamp -o runtime "$APP/Contents/Resources/binaries/node-darwin-arm64/node" || {
+        echo "  ❌ Failed to sign node binary"
+        exit 1
+      }
+      echo "  ✓ Node signed (sandbox only, no app-identifier)"
+
+      # 4. Sign main binary + .app WITH application-identifier (from merged entitlements)
+      #    Sign the main executable first, then the .app bundle (without --deep)
+      echo "  Signing main executable..."
+      codesign -f -s "$APPLE_SIGNING_IDENTITY" --entitlements "$MERGED_ENTITLEMENTS" --timestamp -o runtime "$APP/Contents/MacOS/deep-desk" || {
+        echo "  ❌ Failed to sign main executable"
+        exit 1
+      }
+      # NOTE: no --deep — would re-sign node with application-identifier, triggering Apple error 90885
+      echo "  Signing .app bundle..."
+      codesign -f -s "$APPLE_SIGNING_IDENTITY" --entitlements "$MERGED_ENTITLEMENTS" --timestamp -o runtime "$APP" || {
+        echo "  ❌ Failed to sign .app bundle"
+        exit 1
+      }
+      echo "  ✓ App signed (profile + custom entitlements)"
+    fi
+    rm -f "$NODE_ENTITLEMENTS" "$MERGED_ENTITLEMENTS"
+
+    # Build signed .pkg for App Store submission
+    if [ "$APPLE_SIGNING_IDENTITY" != "-" ] && [ -n "$APPLE_SIGNING_IDENTITY" ]; then
+      echo "  Building .pkg..."
+      INSTALLER_ID="${APPLE_INSTALLER_IDENTITY:-3rd Party Mac Developer Installer: Jason Smith (K3DD58HZ3A)}"
+      rm -f "$BUNDLE_DIR/Deep Desk.pkg"
+      productbuild --component "$APP" /Applications --sign "$INSTALLER_ID" "$BUNDLE_DIR/Deep Desk.pkg" || {
+        echo "  ❌ Failed to build .pkg"
+        exit 1
+      }
+      echo "  ✓ .pkg built: $BUNDLE_DIR/Deep Desk.pkg"
+
+      # Pre-upload validation (requires API key — skip if not available)
+      if [ -f "$BUNDLE_DIR/Deep Desk.pkg" ]; then
+        if [ -n "${APPLE_API_KEY_ID:-}" ] && [ -n "${APPLE_API_ISSUER:-}" ]; then
+          echo "  Validating .pkg for App Store..."
+          if xcrun altool --validate-app -f "$BUNDLE_DIR/Deep Desk.pkg" -t macos --apiKey "$APPLE_API_KEY_ID" --apiIssuer "$APPLE_API_ISSUER" 2>&1; then
+            echo "  ✓ .pkg validation passed"
+          else
+            echo "  ⚠️ .pkg validation had issues (check output above)"
+          fi
+        else
+          echo "  ⚠️ Skipping .pkg validation (APPLE_API_KEY_ID / APPLE_API_ISSUER not set)"
+        fi
+      fi
+    fi
+
+    echo "  ✓ macOS App Store build complete"
+    ls -lh "$BUNDLE_DIR/"*.app 2>/dev/null || echo "  (.app in bundle/macos/)"
+    ls -lh "$BUNDLE_DIR/"*.pkg 2>/dev/null || true
     ;;
   windows)
     echo "  Windows build requires cross-compilation or Windows host."

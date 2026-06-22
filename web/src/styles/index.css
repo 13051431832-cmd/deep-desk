@@ -116,6 +116,37 @@ body {
   font-family: var(--font-mono);
 }
 
+.license-form {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.license-input {
+  flex: 1;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-primary);
+  padding: 10px 12px;
+  font-size: 13px;
+  font-family: var(--font-mono);
+  outline: none;
+}
+.license-input:focus { border-color: var(--accent); }
+
+.license-ok {
+  color: #22c55e;
+  font-size: 13px;
+  margin: 0 0 8px 0;
+}
+
+.license-err {
+  color: #ef4444;
+  font-size: 13px;
+  margin: 0 0 8px 0;
+}
+
 /* === Language Switcher === */
 .lang-bar {
   display: flex;

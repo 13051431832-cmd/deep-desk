@@ -1,25 +1,89 @@
 import { homedir } from "os";
 import { join } from "path";
 import { fileURLToPath } from "url";
-import { spawnProcess, spawnSync, type SpawnedProcess } from "./runtime";
-import { existsSync, mkdirSync, cpSync } from "fs";
+import { spawnProcess, spawnSync, type SpawnedProcess, readTextFile } from "./runtime";
+import { existsSync, mkdirSync, cpSync, readFileSync } from "fs";
 
 const home = homedir();
 const MODULE_DIR = fileURLToPath(new URL(".", import.meta.url));
 // Bundled plugins — complete edition ships these in the app bundle
 const BUNDLED_PLUGINS = join(MODULE_DIR, "..", "bundled-plugins", "claude-plugins-official");
 
-// Bundled bun binary (falls back to system bun)
+// Bundled bun binary (falls back to system bun, then bundled node, then system node)
 const BUNDLED_BUN = join(MODULE_DIR, "../../binaries",
   process.platform === "win32"
     ? "bun-windows-x64/bun.exe"
     : `bun-darwin-${process.arch === "arm64" ? "aarch64" : "x64"}/bun`);
+const BUNDLED_NODE = join(MODULE_DIR, "../../binaries/node-darwin-arm64/node");
 const SYSTEM_BUN = join(home, ".bun", "bin", process.platform === "win32" ? "bun.exe" : "bun");
-const BUN_BIN = existsSync(BUNDLED_BUN) ? BUNDLED_BUN : SYSTEM_BUN;
+
+// Runtime auto-detection: bundled bun → bundled node → system bun → system node
+function detectRuntime(): string {
+  if (existsSync(BUNDLED_BUN)) return BUNDLED_BUN;
+  if (existsSync(BUNDLED_NODE)) return BUNDLED_NODE;
+  if (existsSync(SYSTEM_BUN)) return SYSTEM_BUN;
+  // Check PATH for node as last resort
+  try {
+    const which = spawnSync(process.platform === "win32" ? "where" : "which", ["node"]);
+    if (which.exitCode === 0) return "node";
+  } catch {}
+  return "node"; // Best effort
+}
+const AVAILABLE_RUNTIME = detectRuntime();
+const IS_NODE_RUNTIME = AVAILABLE_RUNTIME === BUNDLED_NODE || AVAILABLE_RUNTIME === "node";
 
 const CCB_SCRIPT = join(home, "node_modules", "claude-code-best", "dist", "cli.js");
 const CWD = home;
+const LICENSE_FILE = join(home, ".deepdesk", "license.json");
 const MCP_CONFIG = join(home, ".claude", "mcp.json");
+const IS_MAC = process.platform === "darwin";
+const RESOURCE_DIR = process.env.DEEP_DESK_RESOURCES || MODULE_DIR;
+const RECEIPT_CACHE = join(home, ".deepdesk", "receipt-cache.json");
+
+// Receipt validation cache (Mac App Store only).
+// Populated from disk at module load (sync), refreshed by server.ts via Apple API.
+let _receiptPro = false;
+let _receiptValidatedAt = 0;
+
+// Restore persistent cache at module load — makes isPro() correct immediately
+// on every launch after the first (avoids waiting for async Apple API call).
+// Non-consumable IAP is permanent: once purchased, always Pro.
+// 30-day revalidation window is generous and handles edge cases like
+// receipt corruption or device transfer without penalizing legitimate users.
+const RECEIPT_MAX_AGE = 30 * 24 * 3600 * 1000; // 30 days
+
+try {
+  const raw = readFileSync(RECEIPT_CACHE, "utf-8");
+  const cache = JSON.parse(raw);
+  if (Date.now() - cache.validatedAt < RECEIPT_MAX_AGE) {
+    _receiptPro = cache.pro;
+    _receiptValidatedAt = cache.validatedAt;
+  }
+} catch { /* no cache yet — first launch or Free user */ }
+
+/** Called by server.ts after async App Store receipt validation completes. */
+export function setReceiptCache(pro: boolean) {
+  _receiptPro = pro;
+  _receiptValidatedAt = Date.now();
+}
+
+function isPro(): boolean {
+  if (IS_MAC) {
+    // Mac: validated receipt cache only (no heuristic — avoids false positives).
+    if (_receiptValidatedAt > 0 && (Date.now() - _receiptValidatedAt) < RECEIPT_MAX_AGE) {
+      return _receiptPro;
+    }
+    // Cache expired or never populated → not Pro until re-validated.
+    return false;
+  }
+  // Windows / Linux: license key redeem.
+  try {
+    const raw = readFileSync(LICENSE_FILE, "utf-8");
+    return !!JSON.parse(raw).pro;
+  } catch {
+    return false;
+  }
+}
 
 // Whitelist of env vars to pass to ccb subprocess (avoid leaking all env)
 const CCB_ENV_KEYS = [
@@ -57,9 +121,14 @@ function buildEnv(): Record<string, string> {
   env.NO_COLOR = "1";
   // Ensure common binary paths are in PATH (fixes node/python not found)
   const extraPaths = ["/opt/homebrew/bin", "/usr/local/bin"].filter(p => existsSync(p));
+  const existingPath = env.PATH || process.env.PATH || "";
   if (extraPaths.length > 0) {
     const sep = isWin ? ";" : ":";
-    env.PATH = extraPaths.join(sep) + sep + (env.PATH || process.env.PATH || "");
+    if (existingPath) {
+      env.PATH = extraPaths.join(sep) + sep + existingPath;
+    } else {
+      env.PATH = extraPaths.join(sep);
+    }
   }
   env.CLAUDE_CODE_USE_OPENAI = "true";
   env.OPENAI_BASE_URL = env.OPENAI_BASE_URL || "https://api.deepseek.com";
@@ -107,10 +176,14 @@ function diagnose(): string[] {
   const lines: string[] = [];
   const isWin = process.platform === "win32";
 
-  // 1. Bun binary
-  lines.push(`Bun binary: ${BUN_BIN}`);
-  if (!existsSync(BUN_BIN)) {
-    lines.push(`  ❌ NOT FOUND — 进程无法启动的根本原因`);
+  // 1. Runtime binary
+  const runtimeLabel = IS_NODE_RUNTIME ? "Node.js" : "Bun";
+  const isBareCommand = AVAILABLE_RUNTIME === "node" || AVAILABLE_RUNTIME === "bun";
+  lines.push(`Runtime (${runtimeLabel}): ${AVAILABLE_RUNTIME}`);
+  if (isBareCommand) {
+    lines.push(`  ✅ 存在于 PATH 中（非完整路径）`);
+  } else if (!existsSync(AVAILABLE_RUNTIME)) {
+    lines.push(`  ❌ NOT FOUND — process cannot start`);
     if (isWin) {
       const bundled = join(MODULE_DIR, "../../binaries", "bun-windows-x64", "bun.exe");
       const system = join(home, ".bun", "bin", "bun.exe");
@@ -188,6 +261,93 @@ function findBash(): string {
   return "bash";
 }
 
+const CONVERSATIONS_DIR = join(home, ".deepdesk", "conversations");
+
+// ── Conversation summarization ─────────────────────────────────────────
+// Reads the conversation file and calls DeepSeek to produce a structured
+// summary suitable for injecting into a fresh CCB session.
+
+interface ConvMessage {
+  role: string;
+  content: string;
+  thinkingContent?: string;
+}
+
+export async function summarizeConversation(convId: string): Promise<string | null> {
+  const convPath = join(CONVERSATIONS_DIR, `${convId}.json`);
+  let messages: ConvMessage[] = [];
+  try {
+    const raw = await readTextFile(convPath);
+    const data = JSON.parse(raw);
+    messages = data.messages || [];
+  } catch {
+    return null; // No saved conversation yet
+  }
+
+  // Take the last 40 user+assistant messages for summarization
+  const relevant = messages
+    .filter((m: ConvMessage) => m.role === "user" || m.role === "assistant")
+    .slice(-40);
+
+  // Fewer than 4 messages — include full text directly, no summarization needed
+  if (relevant.length < 4) {
+    return relevant
+      .map((m: ConvMessage) => {
+        const prefix = m.role === "user" ? "用户" : "AI";
+        return `${prefix}: ${m.content || ""}`;
+      })
+      .join("\n\n");
+  }
+
+  const transcript = relevant
+    .map((m: ConvMessage) => {
+      const prefix = m.role === "user" ? "用户" : "AI";
+      const text = m.content?.slice(0, 800) || "";
+      const thinking = m.thinkingContent
+        ? ` [思考过程: ${m.thinkingContent.slice(0, 200)}]`
+        : "";
+      return `${prefix}: ${text}${thinking}`;
+    })
+    .join("\n\n");
+
+  const apiKey = process.env.DEEPSEEK_API_KEY || process.env.OPENAI_API_KEY || "";
+  const baseUrl = process.env.OPENAI_BASE_URL || "https://api.deepseek.com";
+  if (!apiKey) return null;
+
+  const prompt = `你是一个对话摘要助手。请将以下对话压缩成一份简洁的摘要（中文），保留：
+1. 用户的核心需求和目标
+2. 已完成的关键工作（文件改动、修复的 bug、实现的功能）
+3. 当前进行中的任务和下一步计划
+4. 重要的决策和技术约定
+
+摘要控制在 500 字以内。只输出摘要，不要添加额外说明。
+
+对话记录：
+${transcript}`;
+
+  try {
+    const resp = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "deepseek-chat",
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0,
+        max_tokens: 800,
+      }),
+      signal: AbortSignal.timeout(30000),
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json() as any;
+    return data?.choices?.[0]?.message?.content?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 // ── Types ─────────────────────────────────────────────────────────────
 
 export type TextCallback = (text: string, isPartial: boolean) => void;
@@ -199,7 +359,7 @@ export type ErrorCallback = (error: string) => void;
 
 export interface CCBSession {
   sendMessage(text: string): void;
-  sendPermission(approved: boolean): void;
+  sendPermission(approved: boolean, answer?: Record<string, string>): void;
   kill(): void;
   onText: TextCallback;
   onPermission: PermissionCallback | null;
@@ -208,6 +368,7 @@ export interface CCBSession {
   onDone: DoneCallback;
   onError: ErrorCallback;
   pendingPermission: string | null;
+  pendingQuestions: any[] | null;
 }
 
 // ── Shared NDJSON stream parser ────────────────────────────────────────
@@ -219,6 +380,7 @@ interface ParseCallbacks {
   onThinking?(text: string): void;
   onText?(text: string, isPartial: boolean): void;
   onDone?(fullText: string): void;
+  onAskUserQuestion?(toolId: string, questions: any[]): void;
 }
 
 function parseChunk(
@@ -227,6 +389,7 @@ function parseChunk(
   activeToolId: { val: string }, activeToolName: { val: string },
   toolInputBuf: { val: string },
   cbs: ParseCallbacks,
+  askUserQTriggered?: { val: boolean },
 ) {
   buffer.val += chunk;
   const lines = buffer.val.split("\n");
@@ -244,8 +407,19 @@ function parseChunk(
 
       if (etype === "content_block_start") {
         const cb = inner.content_block || event.content_block || {};
+        // If the previous block was an AskUserQuestion tool_use, its input is now complete
+        if (activeToolName.val === "AskUserQuestion" && activeToolId.val && !(askUserQTriggered?.val)) {
+          try {
+            const parsed = JSON.parse(toolInputBuf.val);
+            if (parsed.questions?.length > 0) {
+              if (askUserQTriggered) askUserQTriggered.val = true;
+              cbs.onAskUserQuestion?.(activeToolId.val, parsed.questions);
+            }
+          } catch {}
+        }
         if (cb.type === "tool_use" && cb.name) {
           activeToolId.val = cb.id || ""; activeToolName.val = cb.name; toolInputBuf.val = "";
+          if (askUserQTriggered) askUserQTriggered.val = false;
           cbs.onToolStart?.(cb.name, cb.id);
         }
         continue;
@@ -301,6 +475,17 @@ function parseChunk(
       if (cleaned) { fullText.val += cleaned + "\n"; cbs.onText?.(cleaned, true); }
     }
   }
+  // Fallback: if AskUserQuestion was the last block and stream paused (no next block),
+  // trigger the callback here so the frontend can show the question before CCB blocks on stdin
+  if (activeToolName.val === "AskUserQuestion" && activeToolId.val && !(askUserQTriggered?.val)) {
+    try {
+      const parsed = JSON.parse(toolInputBuf.val);
+      if (parsed.questions?.length > 0) {
+        if (askUserQTriggered) askUserQTriggered.val = true;
+        cbs.onAskUserQuestion?.(activeToolId.val, parsed.questions);
+      }
+    } catch {}
+  }
 }
 
 // ── Session spawner ───────────────────────────────────────────────────
@@ -313,10 +498,17 @@ export function spawnSession(callbacks: {
   onDone: DoneCallback;
   onError: ErrorCallback;
   onStatus?: (message: string) => void;
-}, options?: { bypassPermissions?: boolean; planMode?: boolean }): CCBSession {
+  onContextStatus?: (status: "summarizing" | "restarting" | "done") => void;
+}, options?: {
+  bypassPermissions?: boolean;
+  planMode?: boolean;
+  convId?: string;
+  initialContext?: string;
+}): CCBSession {
   const env = buildEnv();
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
+  const convId = options?.convId || "";
 
   // Mutable references — swapped on restart
   let proc: SpawnedProcess;
@@ -331,6 +523,10 @@ export function spawnSession(callbacks: {
   const MAX_RESTARTS = 3;
   let procReady = false;
   const messageQueue: string[] = [];
+  let userMessageCount = 0;
+  const CONTEXT_THRESHOLD = 15; // Trigger summarization after ~15 user messages
+  let summarizationInProgress = false;
+  let initialContext = options?.initialContext || "";
 
   function flushQueue() {
     while (messageQueue.length > 0 && proc && !proc.killed && procReady) {
@@ -343,6 +539,7 @@ export function spawnSession(callbacks: {
   // ── Session object ──────────────────────────────────────────────────
   const session: CCBSession = {
     pendingPermission: null,
+    pendingQuestions: null,
     onText: callbacks.onText,
     onPermission: callbacks.onPermission || null,
     onTool: callbacks.onTool || null,
@@ -351,9 +548,17 @@ export function spawnSession(callbacks: {
     onError: callbacks.onError,
 
     sendMessage(text: string) {
+      // Inject initial context summary on first message
+      let messageText = text;
+      if (initialContext && userMessageCount === 0) {
+        messageText = `[此前对话摘要 - 请基于此摘要继续工作]\n${initialContext}\n\n---\n以下是用户的新消息:\n${text}`;
+        initialContext = ""; // Only inject once
+      }
+
+      userMessageCount++;
       const msg = JSON.stringify({
         type: "user",
-        message: { role: "user", content: [{ type: "text", text }] },
+        message: { role: "user", content: [{ type: "text", text: messageText }] },
       }) + "\n";
       fullText = "";
       hasStreamedContent = false;
@@ -367,9 +572,42 @@ export function spawnSession(callbacks: {
         // Auto-restart if process died (e.g. after Stop)
         if (!proc || proc.killed) startProc();
       }
+
+      // ── Context threshold check ──────────────────────────────
+      if (convId && userMessageCount >= CONTEXT_THRESHOLD && !summarizationInProgress) {
+        doSummarizeAndRestart();
+      }
     },
 
-    sendPermission(approved: boolean) {
+    sendPermission(approved: boolean, answer?: Record<string, string>) {
+      // If answer data is provided, this is an AskUserQuestion response.
+      // Write a tool_result user message to CCB stdin instead of a permission decision.
+      if (answer && pendingPermissionId) {
+        const answersStr = JSON.stringify(answer);
+        const toolResult = JSON.stringify({
+          type: "user",
+          message: {
+            role: "user",
+            content: [{
+              type: "tool_result",
+              tool_use_id: pendingPermissionId,
+              content: answersStr,
+            }],
+          },
+        }) + "\n";
+        pendingPermissionId = null;
+        fullText = "";
+        hasStreamedContent = false;
+        session.pendingQuestions = null;
+        if (proc && !proc.killed && procReady) {
+          try { proc.stdinWrite(encoder.encode(toolResult)); proc.stdinFlush(); }
+          catch { messageQueue.push(toolResult); }
+        } else {
+          // Process not ready — queue and flush when it comes back
+          messageQueue.push(toolResult);
+        }
+        return;
+      }
       const decision = JSON.stringify({
         type: "permission",
         id: pendingPermissionId,
@@ -378,9 +616,13 @@ export function spawnSession(callbacks: {
       pendingPermissionId = null;
       fullText = "";
       hasStreamedContent = false;
+      session.pendingQuestions = null;
       if (proc && !proc.killed && procReady) {
         try { proc.stdinWrite(encoder.encode(decision)); proc.stdinFlush(); }
         catch { messageQueue.push(decision); }
+      } else {
+        // Process not ready — queue and flush when it comes back
+        messageQueue.push(decision);
       }
     },
 
@@ -396,20 +638,60 @@ export function spawnSession(callbacks: {
     },
   };
 
+  // ── Context-aware summarization + restart ────────────────────────────
+
+  async function doSummarizeAndRestart() {
+    if (summarizationInProgress || !convId) return;
+    summarizationInProgress = true;
+    callbacks.onContextStatus?.("summarizing");
+
+    const summary = await summarizeConversation(convId);
+    if (summary) {
+      callbacks.onContextStatus?.("restarting");
+      initialContext = summary;
+      userMessageCount = 0;
+      restartCount = 0;
+      restartProc();
+    } else {
+      // If summarization failed, don't retry for this session
+      userMessageCount = 0;
+    }
+    summarizationInProgress = false;
+    callbacks.onContextStatus?.("done");
+  }
+
+  function restartProc() {
+    procReady = false;
+    if (proc) {
+      if (process.platform === "win32") {
+        try { proc.kill(); } catch {}
+      } else {
+        try { process.kill(-proc.pid, "SIGTERM"); } catch {}
+        try { proc.kill("SIGTERM"); } catch {}
+      }
+    }
+    startProc();
+  }
+
   // ── Start ccb process + wire up readers ──────────────────────────────
 
   // Auto-install claude-code-best + superpowers if not present
   function ensureCCB(): boolean {
-    if (!existsSync(BUN_BIN)) {
+    if (!existsSync(AVAILABLE_RUNTIME)) {
       const diag = diagnose();
-      callbacks.onError(`❌ Bun 未找到: ${BUN_BIN}\n请确保 Deep Desk 安装完整，或手动安装 Bun: https://bun.sh\n\n诊断信息:\n${diag.join("\n")}`);
+      const runtimeName = IS_NODE_RUNTIME ? "Node.js" : "Bun";
+      const installUrl = IS_NODE_RUNTIME ? "https://nodejs.org" : "https://bun.sh";
+      callbacks.onError(`❌ ${runtimeName} 未找到: ${AVAILABLE_RUNTIME}\n请确保 Deep Desk 安装完整，或手动安装 ${runtimeName}: ${installUrl}\n\n诊断信息:\n${diag.join("\n")}`);
       return false;
     }
     if (!existsSync(CCB_SCRIPT)) {
       callbacks.onStatus?.("Installing AI engine (one-time setup, ~30s)...");
       try {
         mkdirSync(home, { recursive: true });
-        const result = spawnSync(BUN_BIN, ["install", "claude-code-best"], {
+        // Use npm when running under Node.js, otherwise use bun install
+        const installCmd = IS_NODE_RUNTIME ? "npm" : AVAILABLE_RUNTIME;
+        const installArgs = IS_NODE_RUNTIME ? ["install", "claude-code-best"] : ["install", "claude-code-best"];
+        const result = spawnSync(installCmd, installArgs, {
           cwd: home, env: { ...process.env, HOME: home } as Record<string, string>,
           stdout: "pipe", stderr: "pipe",
         });
@@ -426,10 +708,14 @@ export function spawnSession(callbacks: {
       }
     }
     // Install superpowers plugin for skills (Pro feature)
-    // Complete edition: bundled plugins in the app resources (no network needed)
-    // Free edition: git clone from GitHub
+    // Pro users: bundled plugins in app resources, or authorized download
+    // Free users: no skills — agent works without them
     const pluginCacheDir = join(home, ".claude", "plugins", "cache", "claude-plugins-official");
     if (!existsSync(pluginCacheDir)) {
+      if (!isPro()) {
+        // Free edition: no skills. Return normally — agent works fine without.
+        return true;
+      }
       callbacks.onStatus?.("Installing Pro skills (~200 skills, one-time)...");
       try {
         mkdirSync(join(home, ".claude", "plugins", "cache"), { recursive: true });
@@ -441,12 +727,12 @@ export function spawnSession(callbacks: {
             stdout: "pipe", stderr: "pipe",
           });
           if (clone.exitCode !== 0) {
-            callbacks.onError("Skills install skipped (network issue). Agent will work without skills.");
+            callbacks.onStatus?.("Skills install skipped (network issue). Agent will work without skills.");
             return true;
           }
         }
         callbacks.onStatus?.("Pro skills ready. Starting agent...");
-      } catch { callbacks.onError("Skills install skipped. Starting agent..."); }
+      } catch { callbacks.onStatus?.("Skills install skipped. Starting agent..."); }
     }
     return true;
   }
@@ -468,7 +754,7 @@ export function spawnSession(callbacks: {
     if (existsSync(MCP_CONFIG)) args.push("--mcp-config", MCP_CONFIG);
 
     try {
-      proc = spawnProcess(BUN_BIN, [CCB_SCRIPT, ...args], {
+      proc = spawnProcess(AVAILABLE_RUNTIME, [CCB_SCRIPT, ...args], {
         cwd: CWD, env,
         stdin: "pipe", stdout: "pipe", stderr: "pipe",
       });
@@ -503,6 +789,7 @@ export function spawnSession(callbacks: {
     const atiRef = { val: "" };
     const atnRef = { val: "" };
     const tibRef = { val: "" };
+    const auqRef = { val: false }; // AskUserQuestion already triggered for this block
 
     const parseCbs: ParseCallbacks = {
       onToolStart: (name, id) => { if (callbacks.onTool) callbacks.onTool(name, id, "start"); },
@@ -511,6 +798,44 @@ export function spawnSession(callbacks: {
       onThinking: (text) => { if (callbacks.onThinking) callbacks.onThinking(text); },
       onText: (text, isPartial) => { if (isPartial && text) callbacks.onText(text, true); },
       onDone: (fullText) => { callbacks.onDone(fullText); },
+      onAskUserQuestion: (toolId, questions) => {
+        pendingPermissionId = toolId;
+        session.pendingPermission = toolId;
+        session.pendingQuestions = questions;
+        if (bypass) {
+          // Auto-answer with empty values so the model can continue
+          const autoAnswer: Record<string, string> = {};
+          for (const q of questions) {
+            autoAnswer[q.question] = "";
+          }
+          const answersStr = JSON.stringify(autoAnswer);
+          const toolResult = JSON.stringify({
+            type: "user",
+            message: {
+              role: "user",
+              content: [{
+                type: "tool_result",
+                tool_use_id: toolId,
+                content: answersStr,
+              }],
+            },
+          }) + "\n";
+          pendingPermissionId = null;
+          session.pendingQuestions = null;
+          if (proc && !proc.killed && procReady) {
+            try { proc.stdinWrite(encoder.encode(toolResult)); proc.stdinFlush(); }
+            catch { messageQueue.push(toolResult); }
+          }
+          return;
+        }
+        if (callbacks.onPermission) {
+          const firstQ = questions[0];
+          const summary = questions.length === 1
+            ? firstQ.question
+            : `${firstQ.question} (+${questions.length - 1} more)`;
+          callbacks.onPermission(toolId, "AskUserQuestion", summary);
+        }
+      },
     };
 
     async function readLoop() {
@@ -519,9 +844,9 @@ export function spawnSession(callbacks: {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-          parseChunk(decoder.decode(value, { stream: true }), bufRef, ftRef, hsRef, atiRef, atnRef, tibRef, parseCbs);
+          parseChunk(decoder.decode(value, { stream: true }), bufRef, ftRef, hsRef, atiRef, atnRef, tibRef, parseCbs, auqRef);
         }
-        if (bufRef.val.trim()) parseChunk("\n", bufRef, ftRef, hsRef, atiRef, atnRef, tibRef, parseCbs);
+        if (bufRef.val.trim()) parseChunk("\n", bufRef, ftRef, hsRef, atiRef, atnRef, tibRef, parseCbs, auqRef);
       } catch {}
     }
 
@@ -602,7 +927,7 @@ export function runCCBStream(
     args.push(message);
     if (existsSync(MCP_CONFIG)) args.push("--mcp-config", MCP_CONFIG);
 
-    const proc = spawnProcess(BUN_BIN, [CCB_SCRIPT, ...args], {
+    const proc = spawnProcess(AVAILABLE_RUNTIME, [CCB_SCRIPT, ...args], {
       cwd: CWD, env,
       stdin: "pipe", stdout: "pipe", stderr: "pipe",
     });
@@ -614,6 +939,7 @@ export function runCCBStream(
     const atiRef = { val: "" };
     const atnRef = { val: "" };
     const tibRef = { val: "" };
+    const auqRef2 = { val: false };
     const decoder = new TextDecoder();
 
     const parseCbs: ParseCallbacks = {
@@ -630,9 +956,9 @@ export function runCCBStream(
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-          parseChunk(decoder.decode(value, { stream: true }), bufRef, ftRef, hsRef, atiRef, atnRef, tibRef, parseCbs);
+          parseChunk(decoder.decode(value, { stream: true }), bufRef, ftRef, hsRef, atiRef, atnRef, tibRef, parseCbs, auqRef2);
         }
-        if (bufRef.val.trim()) parseChunk("\n", bufRef, ftRef, hsRef, atiRef, atnRef, tibRef, parseCbs);
+        if (bufRef.val.trim()) parseChunk("\n", bufRef, ftRef, hsRef, atiRef, atnRef, tibRef, parseCbs, auqRef2);
       } catch {}
       await proc.exited;
       let stderrText = "";

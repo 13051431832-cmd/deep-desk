@@ -40,7 +40,7 @@ export function App() {
     // Auto-open settings if DeepSeek API key is not configured
     fetch("/api/settings")
       .then(r => r.json())
-      .then(d => { if (!d.deepseekKey) setShowSettings(true); })
+      .then(d => { setHasApiKey(!!d.deepseekKey); if (!d.deepseekKey) setShowSettings(true); })
       .catch(() => {});
   }, []);
 
@@ -51,9 +51,50 @@ export function App() {
     sendMessage(activeConvId.value, text);
   };
 
-  const handleApprove = (permId: string) => {
+  const handleImageChat = async (imageFile: File, question: string, description: string) => {
     if (!activeConvId.value) return;
-    replyPermission(activeConvId.value, true);
+    const cid = activeConvId.value;
+
+    // Add user message to chat, including QWEN Vision description so user can verify
+    const userMsg = { id: Math.random().toString(36).slice(2, 10), role: "user" as const, content: `[图片] ${question}\n\n---\nQWEN Vision 描述：${description}`, status: "done" as const };
+    conversations.value = conversations.value.map((c) =>
+      c.id === cid ? { ...c, messages: [...c.messages, userMsg] } : c
+    );
+
+    // Add placeholder thinking message
+    const aiMsgId = Math.random().toString(36).slice(2, 10);
+    conversations.value = conversations.value.map((c) =>
+      c.id === cid ? { ...c, messages: [...c.messages, { id: aiMsgId, role: "assistant" as const, content: "正在分析图片...", status: "thinking" }], status: "Thinking..." } : c
+    );
+
+    try {
+      const formData = new FormData();
+      formData.append("image", imageFile);
+      formData.append("question", question);
+      formData.append("description", description);
+      const resp = await fetch("/api/chat-with-image", { method: "POST", body: formData });
+      const data = await resp.json();
+      if (data.ok) {
+        conversations.value = conversations.value.map((c) =>
+          c.id === cid ? { ...c, messages: c.messages.map((m) => m.id === aiMsgId ? { ...m, content: data.reply, status: "done" as const } : m), status: "Ready" } : c
+        );
+      } else {
+        conversations.value = conversations.value.map((c) =>
+          c.id === cid ? { ...c, messages: c.messages.map((m) => m.id === aiMsgId ? { ...m, content: `Error: ${data.error}`, status: "error" as const } : m), status: "Ready" } : c
+        );
+      }
+    } catch (err: any) {
+      conversations.value = conversations.value.map((c) =>
+        c.id === cid ? { ...c, messages: c.messages.map((m) => m.id === aiMsgId ? { ...m, content: `Error: ${err.message}`, status: "error" as const } : m), status: "Ready" } : c
+      );
+    }
+
+    triggerAutoSave();
+  };
+
+  const handleApprove = (permId: string, answer?: Record<string, string>) => {
+    if (!activeConvId.value) return;
+    replyPermission(activeConvId.value, true, answer);
   };
 
   const handleDeny = (permId: string) => {
@@ -231,6 +272,7 @@ export function App() {
 
   const [showSettings, setShowSettings] = useState(false);
   const [showProUrl, setShowProUrl] = useState(false);
+  const [hasApiKey, setHasApiKey] = useState(true); // optimistic default until settings load
 
   const isStreaming = active?.status === "Thinking..." || active?.status === "Streaming..." || active?.agentStatus === "warming";
 
@@ -276,6 +318,7 @@ export function App() {
             onSend={handleSend}
             onCancel={handleCancel}
             onCommand={handleCommand}
+            onImageChat={handleImageChat}
             agentMode={active.agentMode}
             agentStatus={active.agentStatus}
             onToggleAgent={handleToggleAgent}
@@ -286,6 +329,8 @@ export function App() {
             bypassPermissions={active.bypassPermissions}
             onTogglePlan={handleTogglePlan}
             onToggleBypass={handleToggleBypass}
+            hasApiKey={hasApiKey}
+            onShowSettings={() => setShowSettings(true)}
           />
           <footer class="status-bar">
             <span>{(() => {
@@ -325,6 +370,12 @@ export function App() {
               )}
               {active.agentStatus === "warming" && (
                 <span class="status-bar-agent">⟳ {t("agent.warmingShort")} {warmingSec}s（通常 15-30s）</span>
+              )}
+              {active.contextStatus === "summarizing" && (
+                <span class="status-bar-agent">{t("misc.summarizing")}</span>
+              )}
+              {active.contextStatus === "restarting" && (
+                <span class="status-bar-agent">{t("misc.restarting")}</span>
               )}
               {active.pendingPermission && (
                 <span class="status-bar-pending">⏳ {t("status.permissionReq")}</span>

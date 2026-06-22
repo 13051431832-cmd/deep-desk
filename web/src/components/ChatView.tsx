@@ -1,12 +1,13 @@
 import { useRef, useEffect, useState } from "preact/hooks";
 import { MessageBubble } from "./MessageBubble";
+import { PermissionCard } from "./PermissionCard";
 import type { Message, PermissionRequest } from "../store";
 import { t } from "../i18n";
 
 interface Props {
   messages: Message[];
   pendingPermission: PermissionRequest | null;
-  onApprove: (id: string) => void;
+  onApprove: (id: string, answer?: Record<string, string>) => void;
   onDeny: (id: string) => void;
   onToggleThinking?: (msgId: string) => void;
 }
@@ -75,7 +76,7 @@ export function ChatView({
 
   return (
     <div class="chat-view">
-      {groups.length === 0 && (
+      {groups.length === 0 && !pendingPermission && (
         <div class="empty-state">
           <h2>{t("misc.emptyChat")}</h2>
           <p>{t("misc.emptyDesc")}</p>
@@ -91,6 +92,13 @@ export function ChatView({
             onToggleThinking={onToggleThinking}
           />
         )
+      )}
+      {pendingPermission && (
+        <PermissionCard
+          permission={pendingPermission}
+          onApprove={onApprove}
+          onDeny={onDeny}
+        />
       )}
       <div ref={bottomRef} />
     </div>

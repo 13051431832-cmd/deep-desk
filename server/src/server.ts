@@ -1,4 +1,4 @@
-import { runCCBStream, spawnSession, setReceiptCache } from "./ccb";
+import { runCCBStream, spawnSession, setReceiptCache, summarizeConversation } from "./ccb";
 import type { CCBSession } from "./ccb";
 import { existsSync, mkdirSync, statSync, rmSync } from "fs";
 import { homedir, tmpdir } from "os";
@@ -333,12 +333,23 @@ async function describeInvoice(imageBuffer: Uint8Array, mimeType: string): Promi
 
 // ── Session helpers ───────────────────────────────────────────────────
 
-function createConvSession(convId: string, ws: ServeWebSocket, opts?: { planMode?: boolean; bypassPermissions?: boolean }): ConvSession {
+async function createConvSession(convId: string, ws: ServeWebSocket, opts?: { planMode?: boolean; bypassPermissions?: boolean }): Promise<ConvSession> {
   const cs: ConvSession = {
     session: null as any, lastUsed: Date.now(), sockets: new Set([ws]),
     planMode: opts?.planMode || false,
     bypassPermissions: opts?.bypassPermissions !== false,
   };
+
+  // Load past conversation summary + point to full history for on-demand retrieval
+  let initialContext: string | undefined;
+  const convPath = join(CONVERSATIONS_DIR, `${convId}.json`);
+  try {
+    const summary = await summarizeConversation(convId);
+    if (summary) {
+      initialContext = `[此前对话摘要]\n${summary}\n\n（完整对话历史: ${convPath}，如需了解具体操作细节，可读取该文件检索。）`;
+    }
+  } catch { /* proceed without context if summarization fails */ }
+
   const session = spawnSession({
     onText(text, isPartial) {
       if (isPartial && text) {
@@ -369,7 +380,7 @@ function createConvSession(convId: string, ws: ServeWebSocket, opts?: { planMode
     onContextStatus(status) {
       broadcast(cs, JSON.stringify({ type: "context_status", status }));
     },
-  }, { bypassPermissions: cs.bypassPermissions, planMode: cs.planMode, convId });
+  }, { bypassPermissions: cs.bypassPermissions, planMode: cs.planMode, convId, initialContext });
   cs.session = session;
   return cs;
 }
@@ -1073,9 +1084,9 @@ serve({
             cs.lastUsed = Date.now();
             ws.send(JSON.stringify({ type: "agent_status", status: "on", note: "Reconnected to existing session" }));
           } else {
-            // First time: create session
+            // First time: create session (loads past context from disk if available)
             ws.send(JSON.stringify({ type: "agent_status", status: "warming" }));
-            cs = createConvSession(convId, ws, {
+            cs = await createConvSession(convId, ws, {
               planMode: msg.planMode || false,
               bypassPermissions: msg.bypassPermissions !== false,
             });
@@ -1094,7 +1105,7 @@ serve({
         if (msg.enabled) {
           if (!cs) {
             ws.send(JSON.stringify({ type: "agent_status", status: "warming" }));
-            const newCs = createConvSession(convId, ws, {
+            const newCs = await createConvSession(convId, ws, {
               planMode: msg.planMode || false,
               bypassPermissions: msg.bypassPermissions !== false,
             });
@@ -1221,7 +1232,7 @@ serve({
       if (msg.type === "agent_start") {
         if (!cs) {
           // Create new session if none exists
-          const newCs = createConvSession(convId, ws, {
+          const newCs = await createConvSession(convId, ws, {
             planMode: msg.planMode || false,
             bypassPermissions: msg.bypassPermissions !== false,
           });

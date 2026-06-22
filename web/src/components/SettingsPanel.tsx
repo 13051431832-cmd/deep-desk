@@ -1,9 +1,10 @@
 import { useState, useEffect } from "preact/hooks";
-import { checkProStatus } from "../store";
+import { checkProStatus, isPro } from "../store";
 
 interface MCPInfo { enabled: boolean; description: string; }
 
 const isWin = navigator.platform.toLowerCase().includes("win");
+const isMac = !isWin && navigator.platform.toLowerCase().includes("mac");
 
 export function SettingsPanel({ onClose }: { onClose: () => void }) {
   const [tab, setTab] = useState<"keys" | "mcp" | "license">("keys");
@@ -16,6 +17,9 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
   const [licenseKey, setLicenseKey] = useState("");
   const [licenseStatus, setLicenseStatus] = useState<"idle" | "activating" | "success" | "alreadyPro" | "error">("idle");
   const [licenseError, setLicenseError] = useState("");
+  const [iapLoading, setIapLoading] = useState(false);
+  const [iapStatus, setIapStatus] = useState<"idle" | "loading" | "waiting" | "success" | "error">("idle");
+  const [iapError, setIapError] = useState("");
 
   useEffect(() => {
     fetch("/api/settings")
@@ -26,6 +30,24 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
       .then(r => r.json())
       .then(d => { setMcpServers(d.servers || {}); setMcpLoading(false); })
       .catch(() => setMcpLoading(false));
+
+    // Listen for StoreKit purchase results (emitted by Rust transaction observer)
+    let unlisten: (() => void) | undefined;
+    if (isMac) {
+      import("@tauri-apps/api/event").then(({ listen }) => {
+        listen("purchase-updated", (event: { payload: string }) => {
+          if (event.payload === "purchased" || event.payload === "restored") {
+            setIapStatus("success");
+            checkProStatus();
+          } else if (event.payload === "failed") {
+            setIapStatus("error");
+            setIapError("Payment failed or was cancelled.");
+          }
+        }).then(fn => { unlisten = fn; });
+      }).catch(() => {});
+    }
+
+    return () => { unlisten?.(); };
   }, []);
 
   const saveKeys = async () => {
@@ -72,6 +94,48 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
     } catch {
       setLicenseStatus("error");
       setLicenseError("Network error — check your connection");
+    }
+  };
+
+  const purchasePro = async () => {
+    setIapLoading(true);
+    setIapStatus("loading");
+    setIapError("");
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("purchase_pro");
+      // Payment sheet presented — wait for transaction observer event
+      setIapStatus("waiting");
+    } catch (e: any) {
+      setIapStatus("error");
+      const msg: string = typeof e === "string" ? e : e?.message || "Purchase failed";
+      // Distinguish user cancellation from genuine failures
+      if (/cancel|2$/i.test(msg)) {
+        setIapError("Purchase cancelled — you can try again anytime.");
+      } else if (/parental|restrict|disable|not allowed/i.test(msg)) {
+        setIapError("Purchases restricted — check Screen Time settings.");
+      } else {
+        setIapError(msg);
+      }
+    } finally {
+      setIapLoading(false);
+    }
+  };
+
+  const restorePurchases = async () => {
+    setIapLoading(true);
+    setIapStatus("loading");
+    setIapError("");
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("restore_purchases");
+      // Restore dialog presented — wait for transaction observer event
+      setIapStatus("waiting");
+    } catch (e: any) {
+      setIapStatus("error");
+      setIapError(typeof e === "string" ? e : e?.message || "Restore failed");
+    } finally {
+      setIapLoading(false);
     }
   };
 
@@ -125,28 +189,62 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
 
         {tab === "license" && (
           <div>
-            <p class="settings-desc">Activate a Pro license to unlock MCP servers and 200+ skills.</p>
-            <div class="license-form">
-              <input
-                type="text"
-                class="license-input"
-                placeholder="XXXX-XXXX-XXXX-XXXX"
-                value={licenseKey}
-                onInput={(e) => setLicenseKey((e.target as HTMLInputElement).value)}
-                disabled={licenseStatus === "activating" || licenseStatus === "success"}
-              />
-              <button
-                class="settings-save"
-                onClick={activateLicense}
-                disabled={licenseStatus === "activating" || licenseStatus === "success" || !licenseKey.trim()}
-              >
-                {licenseStatus === "activating" ? "Activating..." : licenseStatus === "success" ? "✓ Activated" : "Activate"}
-              </button>
-            </div>
-            {licenseStatus === "success" && <p class="license-ok">✓ Pro activated — restart your conversation to load paid skills.</p>}
-            {licenseStatus === "alreadyPro" && <p class="license-ok">✓ Already Pro</p>}
-            {licenseStatus === "error" && <p class="license-err">{licenseError}</p>}
-            <p class="settings-note">Purchase a license at shieldyh.com</p>
+            {isMac ? (
+              <>
+                <p class="settings-desc">Buy Pro via In-App Purchase to unlock MCP servers and 200+ skills.</p>
+                {isPro.value ? (
+                  <p class="license-ok">✓ You are Pro — all paid features are unlocked.</p>
+                ) : (
+                  <div class="license-form" style="flex-direction:column;gap:10px">
+                    <button
+                      class="settings-save"
+                      onClick={purchasePro}
+                      disabled={iapLoading}
+                      style="width:100%"
+                    >
+                      {iapLoading && iapStatus === "loading" ? "Purchasing..." : "Buy Pro — $4.99"}
+                    </button>
+                    <button
+                      class="settings-save"
+                      onClick={restorePurchases}
+                      disabled={iapLoading}
+                      style="width:100%;background:var(--surface-alt);color:var(--text)"
+                    >
+                      Restore Purchases
+                    </button>
+                  </div>
+                )}
+                {iapStatus === "waiting" && <p class="license-ok">⏳ Waiting for payment confirmation...</p>}
+                {iapStatus === "success" && <p class="license-ok">✓ Purchase complete — Pro features unlocked.</p>}
+                {iapStatus === "error" && <p class="license-err">{iapError}</p>}
+                <p class="settings-note">Purchase is tied to your Apple ID. Restore on any Mac with the same account.</p>
+              </>
+            ) : (
+              <>
+                <p class="settings-desc">Activate a Pro license to unlock MCP servers and 200+ skills.</p>
+                <div class="license-form">
+                  <input
+                    type="text"
+                    class="license-input"
+                    placeholder="XXXX-XXXX-XXXX-XXXX"
+                    value={licenseKey}
+                    onInput={(e) => setLicenseKey((e.target as HTMLInputElement).value)}
+                    disabled={licenseStatus === "activating" || licenseStatus === "success"}
+                  />
+                  <button
+                    class="settings-save"
+                    onClick={activateLicense}
+                    disabled={licenseStatus === "activating" || licenseStatus === "success" || !licenseKey.trim()}
+                  >
+                    {licenseStatus === "activating" ? "Activating..." : licenseStatus === "success" ? "✓ Activated" : "Activate"}
+                  </button>
+                </div>
+                {licenseStatus === "success" && <p class="license-ok">✓ Pro activated — restart your conversation to load paid skills.</p>}
+                {licenseStatus === "alreadyPro" && <p class="license-ok">✓ Already Pro</p>}
+                {licenseStatus === "error" && <p class="license-err">{licenseError}</p>}
+                <p class="settings-note">Purchase a license at shieldyh.com</p>
+              </>
+            )}
           </div>
         )}
 
