@@ -699,15 +699,30 @@ serve({
                   const size = fileSizeSync(p) || 0;
                   const ext = name.split(".").pop()?.toLowerCase() || "";
                   let invoiceData: any = null;
-                  // PDF → render to image → Qwen OCR
+                  // PDF: try text extraction first, only OCR if it's image-based
                   if (ext === "pdf") {
                     try {
-                      const rendered = await renderPdfToImage(p);
-                      if (rendered) {
-                        invoiceData = await describeInvoice(rendered.buffer, rendered.mimeType);
+                      const buf = await readFileBytes(p);
+                      const raw = new TextDecoder("utf-8", { fatal: true }).decode(buf);
+                      // Filter to printable chars (ASCII + CJK)
+                      const printable = raw.replace(/[^\x20-\x7E\x0A\x0D\x09\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]/g, "");
+                      // If PDF has substantial text, skip OCR — it's a text document
+                      if (printable.length < 200) {
+                        const rendered = await renderPdfToImage(p);
+                        if (rendered) {
+                          invoiceData = await describeInvoice(rendered.buffer, rendered.mimeType);
+                        }
                       }
-                    } catch (e: any) {
-                      console.error(`[drop] PDF vision failed for ${name}: ${e?.message || e}`);
+                    } catch {
+                      // Can't read as text — try OCR
+                      try {
+                        const rendered = await renderPdfToImage(p);
+                        if (rendered) {
+                          invoiceData = await describeInvoice(rendered.buffer, rendered.mimeType);
+                        }
+                      } catch (e: any) {
+                        console.error(`[drop] PDF vision failed for ${name}: ${e?.message || e}`);
+                      }
                     }
                   }
                   results.push({ path: p, name, size, type: "file", invoice: invoiceData });
