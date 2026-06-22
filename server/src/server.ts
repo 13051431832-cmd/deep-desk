@@ -188,7 +188,7 @@ setInterval(() => {
 
 // ── Vision API ────────────────────────────────────────────────────────
 
-async function callVisionAPI(imageBuffer: Uint8Array, mimeType: string, prompt: string, maxTokens = 1000, model = "qwen3-vl-plus"): Promise<string> {
+async function callVisionAPI(imageBuffer: Uint8Array, mimeType: string, prompt: string, maxTokens = 1000, model = "qwen-vl-ocr-latest"): Promise<string> {
   const qwenKey = process.env.QWEN_API_KEY || process.env.DASHSCOPE_API_KEY || "";
   if (!qwenKey) throw new Error("QWEN_API_KEY not configured");
   const b64 = Buffer.from(imageBuffer).toString("base64");
@@ -307,7 +307,7 @@ async function describeInvoice(imageBuffer: Uint8Array, mimeType: string): Promi
     if (attempt > 0) {
       await new Promise(r => setTimeout(r, 300 + Math.random() * 400));
     }
-    const text = await callVisionAPI(imageBuffer, mimeType, INVOICE_PROMPT, 1500, "qwen-vl-ocr-latest");
+    const text = await callVisionAPI(imageBuffer, mimeType, INVOICE_PROMPT, 1500);
     let json = text.trim();
     if (json.startsWith("```")) {
       json = json.replace(/^```(?:json)?\s*\n?/, "").replace(/\n?```\s*$/, "");
