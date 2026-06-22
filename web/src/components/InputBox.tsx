@@ -285,7 +285,8 @@ export function InputBox({ onSend, onCancel, onCommand, onImageChat, agentMode, 
   };
 
   const handleKeyDown = (e: KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey && !isComposing.current) {
+    // Block Enter during IME composition (Chinese/Japanese/Korean input)
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229 && !isComposing.current) {
       e.preventDefault();
       doSend();
     }
@@ -368,23 +369,31 @@ export function InputBox({ onSend, onCancel, onCommand, onImageChat, agentMode, 
               }]);
               continue;
             }
+            if (f.type === "directory") {
+              setFiles((prev) => [...prev, {
+                id: Math.random().toString(36).slice(2, 8),
+                file: new File([], f.name),
+                content: `[Directory: ${f.path}]`,
+                loading: false,
+                error: null,
+              }]);
+              continue;
+            }
             const ext = f.name.split(".").pop()?.toLowerCase() || "";
             if (IMG_EXT.has(ext)) {
-              // Fetch image data and route through QWEN Vision
               try {
                 const imgResp = await fetch(`/api/file?path=${encodeURIComponent(f.path)}`);
                 if (imgResp.ok) {
                   const blob = await imgResp.blob();
                   const file = new File([blob], f.name, { type: blob.type || `image/${ext}` });
                   addImage(file, f.path);
-                  console.log("[tauri-drop] image added via QWEN path:", f.path);
                 }
               } catch (e) { console.error("[tauri-drop] fetch image failed:", e); }
             } else {
               setFiles((prev) => [...prev, {
                 id: Math.random().toString(36).slice(2, 8),
                 file: new File([], f.name),
-                content: f.textPreview || `[File path: ${f.path}]`,
+                content: `[File: ${f.path}]`,
                 loading: false,
                 error: null,
               }]);

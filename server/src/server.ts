@@ -687,48 +687,30 @@ serve({
                 const paths: string[] = body.paths || [];
                 console.error(`[drop] received ${paths.length} path(s): ${JSON.stringify(paths)}`);
                 const results = [];
-                const MAX_FILES = 20;
-                for (const p of paths.slice(0, MAX_FILES)) {
-                  // Skip directories — only process individual files
+                for (const p of paths) {
+                  const name = p.split("/").pop() || p.split("\\").pop() || p;
                   try {
                     const st = statSync(p);
                     if (st.isDirectory()) {
-                      console.error(`[drop] skipping directory: ${p}`);
+                      results.push({ path: p, name, type: "directory" });
                       continue;
                     }
-                  } catch { results.push({ path: p, error: "not found" }); continue; }
-                  const name = p.split("/").pop() || p.split("\\").pop() || "file";
+                  } catch { results.push({ path: p, name, error: "not found" }); continue; }
                   const size = fileSizeSync(p) || 0;
                   const ext = name.split(".").pop()?.toLowerCase() || "";
-                  const isPdf = ext === "pdf";
-                  let textPreview = "";
                   let invoiceData: any = null;
-                  try {
-                    const buf = await readFileBytes(p);
-                    const raw = new TextDecoder("utf-8", { fatal: true }).decode(buf);
-                    const printable = raw.replace(/[^\x20-\x7E\x0A\x0D\x09\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]/g, "");
-                    if (printable.length > raw.length * 0.7) textPreview = raw.slice(0, 5000);
-                    else if (isPdf) textPreview = "(PDF — attempting visual recognition...)";
-                    else textPreview = "(binary file)";
-                  } catch {
-                    textPreview = isPdf ? "(PDF — attempting visual recognition...)" : "(binary file)";
-                  }
-                  // PDF → render to image → Qwen Vision invoice extraction
-                  if (isPdf && name.includes("发票")) {
+                  // PDF → render to image → Qwen OCR
+                  if (ext === "pdf") {
                     try {
                       const rendered = await renderPdfToImage(p);
                       if (rendered) {
                         invoiceData = await describeInvoice(rendered.buffer, rendered.mimeType);
-                        textPreview = JSON.stringify(invoiceData, null, 2);
                       }
                     } catch (e: any) {
-                      console.error(`[drop] PDF invoice vision failed for ${name}: ${e?.message || e}`);
+                      console.error(`[drop] PDF vision failed for ${name}: ${e?.message || e}`);
                     }
                   }
-                  results.push({ path: p, name, size, textPreview, invoice: invoiceData });
-                }
-                if (paths.length > MAX_FILES) {
-                  console.error(`[drop] truncated ${paths.length} paths to ${MAX_FILES}`);
+                  results.push({ path: p, name, size, type: "file", invoice: invoiceData });
                 }
                 return new Response(JSON.stringify({ ok: true, files: results }), {
                   headers: { "Content-Type": "application/json" },
