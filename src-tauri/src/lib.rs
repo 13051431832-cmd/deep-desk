@@ -29,12 +29,18 @@ pub fn run() {
     #[cfg(not(app_store))]
     let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
     builder
-        .invoke_handler(tauri::generate_handler![
-            open_external,
-            server::retry_server,
-            storekit::purchase_pro,
-            storekit::restore_purchases,
-        ])
+        .invoke_handler({
+            let mut handlers = tauri::generate_handler![
+                open_external,
+                server::retry_server,
+            ];
+            #[cfg(target_os = "macos")]
+            handlers.extend(tauri::generate_handler![
+                storekit::purchase_pro,
+                storekit::restore_purchases,
+            ]);
+            handlers
+        })
         .setup(|app| {
             #[cfg(target_os = "macos")]
             storekit::setup_transaction_observer(&app.handle());
