@@ -287,7 +287,7 @@ jobs:
         with: { targets: "aarch64-apple-darwin" }
       - name: Install web dependencies
         run: bun install && cd web && bun install
-      - name: Build & Sign for App Store (build.sh handles: frontend, server compile, cargo build, re-sign, .pkg)
+      - name: "Build & Sign for App Store (build.sh handles: frontend, server compile, cargo build, re-sign, .pkg)"
         run: bash build.sh macos-appstore
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
