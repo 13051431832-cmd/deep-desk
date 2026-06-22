@@ -1,6 +1,6 @@
 import { runCCBStream, spawnSession, setReceiptCache } from "./ccb";
 import type { CCBSession } from "./ccb";
-import { existsSync, mkdirSync, statSync } from "fs";
+import { existsSync, mkdirSync, statSync, rmSync } from "fs";
 import { homedir, tmpdir } from "os";
 import { join, normalize } from "path";
 import { IS_BUN, readTextFile, writeFileData, fileExists, deleteFileData, readFileBytes, fileSizeSync, globSync, createFileResponse, moduleDir, serve, spawnProcess, readStreamToText, type ServeWebSocket } from "./runtime";
@@ -233,9 +233,19 @@ async function renderPdfToImage(pdfPath: string): Promise<{ buffer: Uint8Array; 
     const tmpDir = join(tmpdir(), "dd-pdf-" + Date.now().toString(36));
     mkdirSync(tmpDir, { recursive: true });
     const proc = spawnProcess("qlmanage", ["-t", "-s", "1200", "-o", tmpDir, pdfPath]);
-    const status = await proc.exited;
+    let status: number;
+    try {
+      status = await Promise.race([
+        proc.exited,
+        new Promise<number>((_, reject) => setTimeout(() => reject(new Error("TIMEOUT")), 30000)),
+      ]);
+    } catch {
+      proc.kill();
+      try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+      return null;
+    }
     if (status !== 0) {
-      try { await deleteFileData(tmpDir); } catch {}
+      try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
       return null;
     }
     // qlmanage produces <filename>.pdf.png in the output dir
@@ -243,14 +253,14 @@ async function renderPdfToImage(pdfPath: string): Promise<{ buffer: Uint8Array; 
     await new Promise(r => setTimeout(r, 200));
     const files = globSync("*.pdf.png", { cwd: tmpDir, absolute: true });
     if (files.length === 0) {
-      try { await deleteFileData(tmpDir); } catch {}
+      try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
       return null;
     }
     const buf = await readFileBytes(files[0]);
     const outPath = join(VISION_UPLOAD_DIR, `pdf-${Date.now()}.png`);
     await writeFileData(outPath, buf);
     // Cleanup temp dir
-    try { for (const f of files) await deleteFileData(f); await deleteFileData(tmpDir); } catch {}
+    try { for (const f of files) await deleteFileData(f); rmSync(tmpDir, { recursive: true, force: true }); } catch {}
     return { buffer: buf, mimeType: "image/png" };
   } catch (e: any) {
     console.error(`[pdf-render] Error rendering ${pdfPath}: ${e?.message || e}`);
